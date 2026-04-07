@@ -13,6 +13,7 @@
 
 <p align="center">
 <a href="./README_CN.md">简体中文</a> •
+<a href="./OMT_GUIDE.md">OMT Guide</a> •
 <a href="https://docs.trytrellis.app/">Docs</a> •
 <a href="https://docs.trytrellis.app/guide/ch02-quick-start">Quick Start</a> •
 <a href="https://docs.trytrellis.app/guide/ch13-multi-platform">Supported Platforms</a> •
@@ -117,6 +118,289 @@ This fork also carries an additive OMT workflow overlay.
 - OpenCode-facing OMT commands and agents live beside Trellis ones under `.opencode/`
 
 Use OMT when you want a stricter plan → review → execute workflow overlay while keeping stock Trellis task storage intact.
+
+For the complete English OMT manual, see [`./OMT_GUIDE.md`](./OMT_GUIDE.md).
+
+## OMT Installation & Usage
+
+For the full step-by-step manual, use [`./OMT_GUIDE.md`](./OMT_GUIDE.md). The section below is the README summary.
+
+OMT is **not** a replacement for Trellis. It is an overlay that sits on top of Trellis.
+
+- Trellis still owns `.trellis/`, task state, specs, workspace journals, and session memory.
+- OMT adds `.omt/`, `oh-my-trellis.jsonc`, and OpenCode-facing workflow assets.
+- OMT v1 is **OpenCode-first**. The overlay runtime in this fork is designed for `.opencode/` first.
+
+### Two installation modes
+
+| Mode | When to use it | What it means today |
+| --- | --- | --- |
+| **Full install** | New repo, or you want to start directly from the OMT-enabled distribution | Start from this fork's OMT-enabled Trellis output from day one |
+| **Additive install** | You already use official Trellis and want to keep that base | Keep your existing Trellis project, then add the OMT overlay files on top |
+
+> Current v1 note: OMT does **not** yet ship a one-command additive installer. In this fork, additive installation is still a file-based overlay process.
+
+### Which path should you choose?
+
+| Your project today | Recommended path |
+| --- | --- |
+| Existing repo with **no Trellis** | Install Trellis first, then add OMT |
+| Existing repo already managed by **official Trellis** | Keep Trellis, add OMT incrementally |
+| Brand-new repo | Start with the OMT-enabled setup from the beginning |
+
+### 1. Existing project not managed by Trellis yet
+
+This is the safest adoption path for an existing app that has never used Trellis.
+
+#### Step 1: install Trellis and initialize the repo
+
+```bash
+npm install -g @mindfoldhq/trellis@latest
+
+cd your-project
+trellis init --opencode -u your-name
+```
+
+This gives you the normal Trellis base:
+
+- `.trellis/`
+- `.opencode/`
+- `.trellis/workspace/your-name/`
+
+#### Step 2: commit the plain Trellis baseline
+
+Before enabling OMT, commit the clean Trellis-only state. That gives you a clear rollback point.
+
+#### Step 3: add the OMT overlay files
+
+Copy the OMT overlay from this fork into your project.
+
+**Project-level OMT files**
+
+```text
+.omt/
+oh-my-trellis.jsonc
+```
+
+**Trellis shared-script additions / updates**
+
+```text
+.trellis/scripts/common/omt.py
+.trellis/scripts/common/omt_config.py
+.trellis/scripts/common/omt_context.py
+.trellis/scripts/common/omt_workflow.py
+.trellis/scripts/common/git_context.py
+.trellis/scripts/common/paths.py
+```
+
+**OpenCode overlay files**
+
+```text
+.opencode/commands/omt-*.md
+.opencode/agents/omt-*.md
+.opencode/lib/omt-config.js
+.opencode/lib/trellis-context.js
+.opencode/plugins/session-start.js
+.opencode/plugins/inject-subagent-context.js
+.opencode/plugins/omt-config.js
+.opencode/plugins/omt-command-guards.js
+.opencode/skills/*
+```
+
+#### Step 4: verify developer identity
+
+If you already ran `trellis init -u your-name`, you are done.
+
+If not, make sure `.trellis/.developer` exists and points to your developer identity:
+
+```bash
+python3 ./.trellis/scripts/init_developer.py your-name
+```
+
+#### Step 5: opt tasks into OMT only when needed
+
+OMT does not require bulk migration of all existing work.
+
+Add OMT metadata only to the tasks that should use OMT workflow semantics.
+
+**Strict mode**
+
+```json
+{
+  "meta": {
+    "workflow_id": "omt/v1",
+    "workflow_mode": "strict"
+  }
+}
+```
+
+**Fast mode**
+
+```json
+{
+  "meta": {
+    "workflow_id": "omt/v1",
+    "workflow_mode": "fast"
+  }
+}
+```
+
+#### Step 6: start using OMT
+
+In OpenCode, use:
+
+- `/omt-start`
+- `/omt-plan`
+- `/omt-review-plan`
+- `/omt-execute`
+- `/omt-verify`
+- `/omt-close`
+
+Use `/trellis:*` when you want the base Trellis workflow, and `/omt-*` when you want the OMT overlay workflow.
+
+### 2. Existing project already managed by official Trellis
+
+This is the incremental installation path.
+
+#### What stays the same
+
+Keep these exactly where they are:
+
+- `.trellis/spec/`
+- `.trellis/tasks/`
+- `.trellis/workspace/`
+- `.trellis/.current-task`
+- existing `/trellis:*` commands
+
+#### What you add
+
+Add:
+
+- `.omt/`
+- `oh-my-trellis.jsonc`
+- OMT shared-script additions in `.trellis/scripts/common/`
+- OMT OpenCode assets under `.opencode/`
+
+#### What you should **not** do
+
+- Do **not** move task artifacts out of `.trellis/tasks/<task>/`
+- Do **not** create a second task database under `.omt/`
+- Do **not** rewrite all historical tasks to OMT mode
+- Do **not** remove `/trellis:*`
+
+#### Recommended incremental rollout
+
+1. Back up or commit your current Trellis state.
+2. Add `.omt/` and `oh-my-trellis.jsonc`.
+3. Merge the OMT shared Python helpers into `.trellis/scripts/common/`.
+4. Add or refresh the OMT OpenCode assets in `.opencode/`.
+5. Pick **one active task** and opt it into OMT mode.
+6. Validate the flow with `/omt-start` and one strict or fast task.
+7. Expand OMT usage task by task.
+
+This keeps migration reversible and avoids mixing “all tasks changed” with “new workflow being evaluated.”
+
+### 3. New project
+
+For a greenfield repo, the cleanest path is to start with OMT from day one.
+
+#### Option A: full OMT-enabled setup
+
+Use the OMT-enabled Trellis output from this fork as your base distribution.
+
+That means your initial repository already includes:
+
+- `.trellis/`
+- `.omt/`
+- `oh-my-trellis.jsonc`
+- `.opencode/` with OMT commands / agents / skills / plugins
+
+#### Option B: Trellis first, OMT immediately after
+
+If you prefer to bootstrap with official Trellis first:
+
+```bash
+mkdir your-project
+cd your-project
+git init
+
+npm install -g @mindfoldhq/trellis@latest
+trellis init --opencode -u your-name
+```
+
+Then immediately apply the OMT overlay files from this fork before you create your first real task.
+
+### Daily usage after installation
+
+#### Strict workflow
+
+Use this for medium or large work:
+
+1. `/omt-start`
+2. `/omt-plan`
+3. `/omt-review-plan`
+4. `/omt-execute`
+5. `/omt-verify`
+6. `/omt-close`
+
+Artifacts are stored in:
+
+```text
+.trellis/tasks/<task>/plan.md
+.trellis/tasks/<task>/review.md
+.trellis/tasks/<task>/execute.md
+.trellis/tasks/<task>/verify.md
+.trellis/tasks/<task>/close.md
+```
+
+#### Fast workflow
+
+Use this for trivial or small, scoped work.
+
+Fast mode only requires `close.md`, but that file must still contain these sections:
+
+- `## Intent`
+- `## Scope`
+- `## Changes`
+- `## Verification`
+- `## Outcome`
+
+#### Promote fast → strict when needed
+
+Promote the task in place when any of these triggers apply:
+
+- `multiple_subsystems`
+- `public_interface_change`
+- `reviewer_or_oracle_required`
+
+Promotion does **not** rename the task or move the directory. It fills in the strict-mode artifacts in the same task folder.
+
+### What OMT changes and what it does not
+
+#### OMT changes
+
+- adds a role-based workflow overlay
+- adds `/omt-*` commands in OpenCode
+- adds strict and fast task workflow modes
+- adds two-tier low/high routing through `.omt/config/` + `oh-my-trellis.jsonc`
+- adds portable OMO-style OpenCode skills
+
+#### OMT does **not** change
+
+- Trellis as the durable source of truth
+- existing Trellis task storage
+- `.trellis/.current-task`
+- numeric `current_phase` and `next_action`
+- existing `/trellis:*` commands
+
+### Related files
+
+If you want the implementation-level details behind the installation model, read:
+
+- [`./.omt/README.md`](./.omt/README.md)
+- [`./.omt/migration.md`](./.omt/migration.md)
+- [`./.omt/skills.md`](./.omt/skills.md)
+- [`./.omt/v1-1-evaluation.md`](./.omt/v1-1-evaluation.md)
 
 ## Spec Templates & Marketplace
 
