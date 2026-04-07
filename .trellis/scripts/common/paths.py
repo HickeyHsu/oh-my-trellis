@@ -260,12 +260,19 @@ def resolve_task_ref(task_ref: str, repo_root: Path | None = None) -> Path | Non
 
     path_obj = Path(normalized)
     if path_obj.is_absolute():
-        return path_obj
+        return None
 
     if normalized.startswith(f"{DIR_WORKFLOW}/"):
-        return repo_root / path_obj
+        candidate = repo_root / path_obj
+    else:
+        candidate = repo_root / DIR_WORKFLOW / DIR_TASKS / path_obj
 
-    return repo_root / DIR_WORKFLOW / DIR_TASKS / path_obj
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(repo_root.resolve())
+    except ValueError:
+        return None
+    return resolved
 
 
 def get_current_task(repo_root: Path | None = None) -> str | None:

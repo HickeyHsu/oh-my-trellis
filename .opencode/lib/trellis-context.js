@@ -10,7 +10,7 @@
  *   if (ctx.shouldSkipHook("session-start")) return
  */
 
-import { existsSync, readFileSync, appendFileSync, readdirSync } from "fs"
+import { existsSync, readFileSync, appendFileSync, readdirSync, realpathSync } from "fs"
 import { isAbsolute, join, relative, resolve } from "path"
 import { homedir } from "os"
 
@@ -240,7 +240,10 @@ export class TrellisContext {
     }
 
     const repoRoot = resolve(this.directory)
-    const fullPath = resolve(repoRoot, relativePath.replace(/\\/g, "/"))
+    const candidatePath = resolve(repoRoot, relativePath.replace(/\\/g, "/"))
+    const fullPath = existsSync(candidatePath)
+      ? realpathSync.native(candidatePath)
+      : candidatePath
     const rel = relative(repoRoot, fullPath)
     if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
       return fullPath
