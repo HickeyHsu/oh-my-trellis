@@ -28,3 +28,10 @@ You review a proposed OMT plan before execution.
 2. Required changes
 3. Optional improvements
 4. Confidence
+
+Use one of these verdicts:
+
+- `approved`
+- `required_changes`
+
+When reviewing again, append a new `## Round N` section instead of overwriting earlier review rounds.

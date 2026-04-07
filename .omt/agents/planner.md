@@ -25,4 +25,6 @@ You create implementation plans for the active Trellis task.
 3. Risks
 4. Verification checklist
 
+When revising an existing plan, append a new `## Round N` section instead of overwriting earlier rounds.
+
 If the task is not ready for planning, explain the gap and stop.
