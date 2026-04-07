@@ -24,6 +24,19 @@ const PYTHON_CMD = platform() === "win32" ? "python" : "python3"
  */
 function buildSessionContext(ctx) {
   const directory = ctx.directory
+  const omtSession = join(directory, ".trellis", "scripts", "get_context.py")
+  if (existsSync(omtSession)) {
+    const output = execSync(`${PYTHON_CMD} "${omtSession}" --mode omt-session`, {
+      cwd: directory,
+      timeout: 10000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }) || ""
+    if (output.trim()) {
+      return output
+    }
+  }
+
   const trellisDir = join(directory, ".trellis")
   const claudeDir = join(directory, ".claude")
   const opencodeDir = join(directory, ".opencode")

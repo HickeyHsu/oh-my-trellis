@@ -208,6 +208,23 @@ function resolveSpecScope(config) {
  */
 function buildSessionContext(ctx) {
   const directory = ctx.directory
+  const omtSessionScript = join(directory, ".trellis", "scripts", "get_context.py")
+  if (existsSync(omtSessionScript)) {
+    try {
+      const output = execFileSync(PYTHON_CMD, [omtSessionScript, "--mode", "omt-session"], {
+        cwd: directory,
+        timeout: 10000,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }) || ""
+      if (output.trim()) {
+        return output
+      }
+    } catch (e) {
+      debugLog("session", "omt-session fallback error:", e.message)
+    }
+  }
+
   const trellisDir = join(directory, ".trellis")
   const claudeDir = join(directory, ".claude")
   const opencodeDir = join(directory, ".opencode")

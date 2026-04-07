@@ -1,27 +1,14 @@
-/**
- * Trellis Context Injection Plugin
- *
- * Injects context when Task tool is called with supported subagent types.
- * Uses OpenCode's tool.execute.before hook.
- *
- * Compatibility:
- * - If oh-my-opencode handles via .claude/hooks/, this plugin skips
- * - Otherwise, this plugin handles injection
- */
-
 import { existsSync, writeFileSync, readdirSync } from "fs"
 import { join } from "path"
+import { execFileSync } from "child_process"
+import { platform } from "os"
 import { TrellisContext, debugLog } from "../lib/trellis-context.js"
 
-// Supported subagent types
-const AGENTS_ALL = ["implement", "check", "debug", "research"]
-const AGENTS_REQUIRE_TASK = ["implement", "check", "debug"]
-// Agents that don't update phase (can be called at any time)
-const AGENTS_NO_PHASE_UPDATE = ["debug", "research"]
+const PYTHON_CMD = platform() === "win32" ? "python" : "python3"
+const AGENTS_ALL = ["implement", "check", "debug", "research", "planner", "reviewer", "executor", "oracle"]
+const AGENTS_REQUIRE_TASK = ["implement", "check", "debug", "planner", "reviewer", "executor", "oracle"]
+const AGENTS_NO_PHASE_UPDATE = ["debug", "research", "planner", "reviewer", "executor", "oracle"]
 
-/**
- * Update current_phase in task.json based on subagent_type
- */
 function updateCurrentPhase(ctx, taskDir, subagentType) {
   if (AGENTS_NO_PHASE_UPDATE.includes(subagentType)) {
     return
@@ -36,21 +23,18 @@ function updateCurrentPhase(ctx, taskDir, subagentType) {
     const currentPhase = taskData.current_phase || 0
     const nextActions = taskData.next_action || []
 
-    // Map action names to subagent types
     const actionToAgent = {
       "implement": "implement",
       "check": "check",
-      "finish": "check"  // finish uses check agent
+      "finish": "check"
     }
 
-    // Find the next phase that matches this subagent_type
     let newPhase = null
     for (const action of nextActions) {
       const phaseNum = action.phase || 0
       const actionName = action.action || ""
       const expectedAgent = actionToAgent[actionName]
 
-      // Only consider phases after current_phase
       if (phaseNum > currentPhase && expectedAgent === subagentType) {
         newPhase = phaseNum
         break
@@ -67,18 +51,13 @@ function updateCurrentPhase(ctx, taskDir, subagentType) {
   }
 }
 
-/**
- * Get context for implement agent
- */
 function getImplementContext(ctx, taskDir) {
   const parts = []
 
-  // 1. Read implement.jsonl (or fallback to spec.jsonl)
   let jsonlPath = join(ctx.directory, taskDir, "implement.jsonl")
   let entries = ctx.readJsonlWithFiles(jsonlPath)
 
   if (entries.length === 0) {
-    // Fallback to spec.jsonl
     jsonlPath = join(ctx.directory, taskDir, "spec.jsonl")
     entries = ctx.readJsonlWithFiles(jsonlPath)
   }
@@ -87,13 +66,11 @@ function getImplementContext(ctx, taskDir) {
     parts.push(ctx.buildContextFromEntries(entries))
   }
 
-  // 2. Requirements document
   const prd = ctx.readProjectFile(join(taskDir, "prd.md"))
   if (prd) {
     parts.push(`=== ${taskDir}/prd.md (Requirements) ===\n${prd}`)
   }
 
-  // 3. Technical design
   const info = ctx.readProjectFile(join(taskDir, "info.md"))
   if (info) {
     parts.push(`=== ${taskDir}/info.md (Technical Design) ===\n${info}`)
@@ -102,20 +79,15 @@ function getImplementContext(ctx, taskDir) {
   return parts.join("\n\n")
 }
 
-/**
- * Get context for check agent
- */
 function getCheckContext(ctx, taskDir) {
   const parts = []
 
-  // 1. Read check.jsonl
   const jsonlPath = join(ctx.directory, taskDir, "check.jsonl")
   const entries = ctx.readJsonlWithFiles(jsonlPath)
 
   if (entries.length > 0) {
     parts.push(ctx.buildContextFromEntries(entries))
   } else {
-    // Fallback: hardcoded check files + spec.jsonl
     const checkFiles = [
       [".opencode/commands/trellis/finish-work.md", "Finish work checklist"],
       [".opencode/commands/trellis/check-cross-layer.md", "Cross-layer check spec"],
@@ -128,7 +100,6 @@ function getCheckContext(ctx, taskDir) {
       }
     }
 
-    // Add spec.jsonl
     const specJsonlPath = join(ctx.directory, taskDir, "spec.jsonl")
     const specEntries = ctx.readJsonlWithFiles(specJsonlPath)
     for (const entry of specEntries) {
@@ -136,7 +107,6 @@ function getCheckContext(ctx, taskDir) {
     }
   }
 
-  // 2. Requirements document
   const prd = ctx.readProjectFile(join(taskDir, "prd.md"))
   if (prd) {
     parts.push(`=== ${taskDir}/prd.md (Requirements - for understanding intent) ===\n${prd}`)
@@ -145,33 +115,26 @@ function getCheckContext(ctx, taskDir) {
   return parts.join("\n\n")
 }
 
-/**
- * Get context for finish phase (final check before PR)
- */
 function getFinishContext(ctx, taskDir) {
   const parts = []
 
-  // 1. Try finish.jsonl first
   const jsonlPath = join(ctx.directory, taskDir, "finish.jsonl")
   const entries = ctx.readJsonlWithFiles(jsonlPath)
 
   if (entries.length > 0) {
     parts.push(ctx.buildContextFromEntries(entries))
   } else {
-    // Fallback: only finish-work.md (lightweight)
     const finishWork = ctx.readProjectFile(".opencode/commands/trellis/finish-work.md")
     if (finishWork) {
       parts.push(`=== .opencode/commands/trellis/finish-work.md (Finish checklist) ===\n${finishWork}`)
     }
   }
 
-  // 2. Spec update process (for active spec sync)
   const updateSpec = ctx.readProjectFile(".opencode/commands/trellis/update-spec.md")
   if (updateSpec) {
     parts.push(`=== .opencode/commands/trellis/update-spec.md (Spec update process) ===\n${updateSpec}`)
   }
 
-  // 3. Requirements document (for verifying requirements are met)
   const prd = ctx.readProjectFile(join(taskDir, "prd.md"))
   if (prd) {
     parts.push(`=== ${taskDir}/prd.md (Requirements - verify all met) ===\n${prd}`)
@@ -180,20 +143,15 @@ function getFinishContext(ctx, taskDir) {
   return parts.join("\n\n")
 }
 
-/**
- * Get context for debug agent
- */
 function getDebugContext(ctx, taskDir) {
   const parts = []
 
-  // 1. Read debug.jsonl (or fallback to spec.jsonl + check files)
   const jsonlPath = join(ctx.directory, taskDir, "debug.jsonl")
   const entries = ctx.readJsonlWithFiles(jsonlPath)
 
   if (entries.length > 0) {
     parts.push(ctx.buildContextFromEntries(entries))
   } else {
-    // Fallback: use spec.jsonl + hardcoded check files
     const specJsonlPath = join(ctx.directory, taskDir, "spec.jsonl")
     const specEntries = ctx.readJsonlWithFiles(specJsonlPath)
     for (const entry of specEntries) {
@@ -212,7 +170,6 @@ function getDebugContext(ctx, taskDir) {
     }
   }
 
-  // 2. Codex review output (if exists)
   const codex = ctx.readProjectFile(join(taskDir, "codex-review-output.txt"))
   if (codex) {
     parts.push(`=== ${taskDir}/codex-review-output.txt (Codex Review Results) ===\n${codex}`)
@@ -221,13 +178,9 @@ function getDebugContext(ctx, taskDir) {
   return parts.join("\n\n")
 }
 
-/**
- * Get context for research agent
- */
 function getResearchContext(ctx, taskDir) {
   const parts = []
 
-  // Dynamic project structure (scan actual spec directory)
   const specPath = ".trellis/spec"
   const specFull = join(ctx.directory, specPath)
 
@@ -240,11 +193,9 @@ function getResearchContext(ctx, taskDir) {
 
       for (const entry of entries) {
         const entryPath = join(specFull, entry.name)
-        // Check if this is a direct spec layer (has index.md)
         if (existsSync(join(entryPath, "index.md"))) {
           structureLines.push(`├── ${entry.name}/`)
         } else {
-          // Check for nested package dirs (monorepo)
           try {
             const nested = readdirSync(entryPath, { withFileTypes: true })
               .filter(d => d.isDirectory() && existsSync(join(entryPath, d.name, "index.md")))
@@ -256,12 +207,10 @@ function getResearchContext(ctx, taskDir) {
               }
             }
           } catch {
-            // Ignore nested read errors
           }
         }
       }
     } catch {
-      // Ignore read errors
     }
   }
   structureLines.push("```")
@@ -287,9 +236,6 @@ function getResearchContext(ctx, taskDir) {
   return parts.join("\n\n")
 }
 
-/**
- * Build enhanced prompt with context
- */
 function buildPrompt(agentType, originalPrompt, context, isFinish = false) {
   const templates = {
     implement: `# Implement Agent Task
@@ -448,33 +394,37 @@ ${originalPrompt}
   return templates[agentType] || originalPrompt
 }
 
+function getOmtAgentContext(ctx, subagentType, isFinish) {
+  const scriptPath = join(ctx.directory, ".trellis", "scripts", "get_context.py")
+  if (!existsSync(scriptPath)) {
+    return ""
+  }
+
+  try {
+    const args = [scriptPath, "--mode", "omt-agent", "--agent", subagentType]
+    if (isFinish) {
+      args.push("--finish")
+    }
+    return execFileSync(PYTHON_CMD, args, {
+      cwd: ctx.directory,
+      timeout: 10000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }) || ""
+  } catch {
+    return ""
+  }
+}
+
 export default async ({ directory }) => {
   const ctx = new TrellisContext(directory)
   debugLog("inject", "Plugin loaded, directory:", directory)
 
   return {
-    // ==========================================================================
-    // ⚠️ KNOWN LIMITATION: OpenCode project-level plugins cannot intercept subagents
-    //
-    // This hook will NOT be triggered because:
-    // 1. Project-level plugins (.opencode/plugin/) don't support tool.execute.before
-    // 2. Only global plugins (npm packages) have full hook permissions
-    // 3. This is a known OpenCode architecture limitation (see Issue #5894)
-    //
-    // SOLUTION: Trellis + OpenCode users must install oh-my-opencode (omo)
-    // - omo is a global plugin with full hook permissions
-    // - omo reads .claude/settings.json and executes Python hooks
-    // - .claude/hooks/inject-subagent-context.py handles the actual injection
-    //
-    // References:
-    // - https://github.com/sst/opencode/issues/5894 (plugin hooks don't intercept subagent)
-    // - https://github.com/sst/opencode/issues/2588 (subagent inherit context)
-    // ==========================================================================
     "tool.execute.before": async (input, output) => {
       try {
         debugLog("inject", "tool.execute.before called, tool:", input?.tool)
 
-        // Only handle Task tool
         const toolName = input?.tool?.toLowerCase()
         if (toolName !== "task") {
           return
@@ -486,22 +436,18 @@ export default async ({ directory }) => {
 
         debugLog("inject", "Task tool called, subagent_type:", subagentType)
 
-        // Only handle supported agent types
         if (!AGENTS_ALL.includes(subagentType)) {
           debugLog("inject", "Skipping - unsupported subagent_type")
           return
         }
 
-        // Check if we should skip (omo will handle)
         if (ctx.shouldSkipHook("inject-subagent-context")) {
           debugLog("inject", "Skipping - omo will handle via .claude/hooks/")
           return
         }
 
-        // Read current task
         const taskDir = ctx.getCurrentTask()
 
-        // Agents requiring task directory
         if (AGENTS_REQUIRE_TASK.includes(subagentType)) {
           if (!taskDir) {
             debugLog("inject", "Skipping - no current task")
@@ -513,32 +459,34 @@ export default async ({ directory }) => {
             return
           }
 
-          // Update current_phase in task.json
           updateCurrentPhase(ctx, taskDir, subagentType)
         }
 
-        // Check for [finish] marker
         const isFinish = originalPrompt.toLowerCase().includes("[finish]")
 
-        // Get context based on agent type
         let context = ""
-        switch (subagentType) {
-          case "implement":
-            context = getImplementContext(ctx, taskDir)
-            break
-          case "check":
-            // Use finish context for [finish] phase (lighter, focused on final verification)
-            // Use check context for regular check (full specs for self-fix loop)
-            context = isFinish
-              ? getFinishContext(ctx, taskDir)
-              : getCheckContext(ctx, taskDir)
-            break
-          case "debug":
-            context = getDebugContext(ctx, taskDir)
-            break
-          case "research":
-            context = getResearchContext(ctx, taskDir)
-            break
+        const omtAgents = ["implement", "check", "debug", "research", "planner", "reviewer", "executor", "oracle"]
+        if (omtAgents.includes(subagentType)) {
+          context = getOmtAgentContext(ctx, subagentType, isFinish)
+        }
+
+        if (!context) {
+          switch (subagentType) {
+            case "implement":
+              context = getImplementContext(ctx, taskDir)
+              break
+            case "check":
+              context = isFinish
+                ? getFinishContext(ctx, taskDir)
+                : getCheckContext(ctx, taskDir)
+              break
+            case "debug":
+              context = getDebugContext(ctx, taskDir)
+              break
+            case "research":
+              context = getResearchContext(ctx, taskDir)
+              break
+          }
         }
 
         if (!context) {
@@ -546,10 +494,8 @@ export default async ({ directory }) => {
           return
         }
 
-        // Build enhanced prompt
         const newPrompt = buildPrompt(subagentType, originalPrompt, context, isFinish)
 
-        // Update the tool input
         output.args = {
           ...args,
           prompt: newPrompt
