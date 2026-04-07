@@ -196,6 +196,7 @@ describe("configurePlatform", () => {
     expect(fs.existsSync(path.join(tmpDir, ".opencode", "agents", "omt-planner.md"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, ".opencode", "skills", "git-master", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, ".opencode", "plugins", "omt-config.js"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".opencode", "plugins", "omt-command-guards.js"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, ".opencode", "lib", "omt-config.js"))).toBe(true);
   });
 

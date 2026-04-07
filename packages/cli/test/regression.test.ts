@@ -61,6 +61,7 @@ import { guidesIndexContent, workspaceIndexContent } from "../src/templates/mark
 import * as markdownExports from "../src/templates/markdown/index.js";
 import { TrellisContext } from "../src/templates/opencode/lib/trellis-context.js";
 import omtConfigPlugin from "../src/templates/opencode/plugins/omt-config.js";
+import omtCommandGuardsPlugin from "../src/templates/opencode/plugins/omt-command-guards.js";
 import {
   loadOmtConfig,
   resolveOmtModel,
@@ -1196,6 +1197,7 @@ sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
 
 from common.omt_workflow import scaffold_strict_artifacts, validate_transition
 from common.omt_workflow import write_review_round
+from common.omt_workflow import write_verify_round
 
 task_dir = Path(${JSON.stringify(taskDir)})
 created = scaffold_strict_artifacts(task_dir)
@@ -1208,6 +1210,13 @@ write_review_round(
     "high",
 )
 execute_result = validate_transition(task_dir, "execute")
+write_verify_round(
+    task_dir,
+    "pass",
+    ["Acceptance criteria met"],
+    ["Verification passed"],
+    [],
+)
 close_result = validate_transition(task_dir, "close")
 print(json.dumps({
     "created": created,
@@ -1528,6 +1537,161 @@ print(json.dumps({
     expect(payload.content).toContain("approved");
     expect(payload.content).toContain("### Mode");
   });
+
+  it("[omt] strict execute-verify-close happy path updates artifacts and status", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-execute-task", {
+      title: "OMT execute task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [
+        { phase: 1, action: "implement" },
+        { phase: 2, action: "check" },
+        { phase: 3, action: "close" },
+      ],
+      meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+    });
+    fs.writeFileSync(path.join(taskDir, "plan.md"), "# Plan\n", "utf-8");
+    fs.writeFileSync(path.join(taskDir, "review.md"), "# Review\n\n## Round 1\n\n### Verdict\n\napproved\n", "utf-8");
+
+    const output = runPythonScript(
+      "execute_verify_close.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.io import read_json
+from common.omt_workflow import (
+    write_execute_round,
+    write_verify_round,
+    write_close_round,
+    validate_transition,
+    finalize_close,
+)
+
+task_dir = Path(${JSON.stringify(taskDir)})
+execute_round = write_execute_round(
+    task_dir,
+    ["src/example.ts"],
+    ["Implemented feature"],
+    ["pnpm test"],
+    [],
+)
+verify_round = write_verify_round(
+    task_dir,
+    "pass",
+    ["Acceptance criteria met"],
+    ["pnpm test passed"],
+    [],
+)
+close_round = write_close_round(
+    task_dir,
+    "Finish the task",
+    ["single subsystem"],
+    ["implemented feature"],
+    ["verified with tests"],
+    "completed",
+)
+close_gate = validate_transition(task_dir, "close")
+final_state = finalize_close(task_dir)
+saved = read_json(task_dir / "task.json") or {}
+print(json.dumps({
+    "execute_round": execute_round,
+    "verify_round": verify_round,
+    "close_round": close_round,
+    "close_gate": close_gate,
+    "final_state": final_state,
+    "status": saved.get("status"),
+    "verification_outcome": saved.get("meta", {}).get("verification_outcome"),
+    "close_outcome": saved.get("meta", {}).get("close_outcome"),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      execute_round: number;
+      verify_round: number;
+      close_round: number;
+      close_gate: [boolean, string];
+      final_state: { status: string; verification_outcome: string; current_phase: number };
+      status: string;
+      verification_outcome: string;
+      close_outcome: string;
+    };
+    expect(payload.execute_round).toBe(1);
+    expect(payload.verify_round).toBe(1);
+    expect(payload.close_round).toBe(1);
+    expect(payload.close_gate[0]).toBe(true);
+    expect(payload.status).toBe("completed");
+    expect(payload.verification_outcome).toBe("pass");
+    expect(payload.close_outcome).toBe("completed");
+  });
+
+  it("[omt] verification failure blocks close until rerun passes", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-verify-loop-task", {
+      title: "OMT verify loop task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [
+        { phase: 1, action: "implement" },
+        { phase: 2, action: "check" },
+        { phase: 3, action: "close" },
+      ],
+      meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+    });
+    fs.writeFileSync(path.join(taskDir, "plan.md"), "# Plan\n", "utf-8");
+    fs.writeFileSync(path.join(taskDir, "review.md"), "# Review\n\n## Round 1\n\n### Verdict\n\napproved\n", "utf-8");
+
+    const output = runPythonScript(
+      "verify_fail_loop.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.omt_workflow import write_execute_round, write_verify_round, validate_transition, write_close_round, finalize_close
+
+task_dir = Path(${JSON.stringify(taskDir)})
+write_execute_round(task_dir, ["src/example.ts"], ["Implemented feature"], ["pnpm test"], [])
+fail_round = write_verify_round(task_dir, "fail", ["Requirement pending"], ["pnpm test failed"], ["Fix issue"])
+blocked = validate_transition(task_dir, "close")
+write_execute_round(task_dir, ["src/example.ts"], ["Fixed issue"], ["pnpm test"], [])
+pass_round = write_verify_round(task_dir, "pass", ["Requirement met"], ["pnpm test passed"], [])
+allowed = validate_transition(task_dir, "close")
+write_close_round(task_dir, "Close after rerun", ["single subsystem"], ["fixed issue"], ["tests pass"], "completed")
+final_state = finalize_close(task_dir)
+print(json.dumps({
+    "fail_round": fail_round,
+    "pass_round": pass_round,
+    "blocked": blocked,
+    "allowed": allowed,
+    "final_state": final_state,
+    "verify_content": (task_dir / "verify.md").read_text(encoding="utf-8"),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      fail_round: number;
+      pass_round: number;
+      blocked: [boolean, string];
+      allowed: [boolean, string];
+      final_state: { status: string };
+      verify_content: string;
+    };
+    expect(payload.fail_round).toBe(1);
+    expect(payload.pass_round).toBe(2);
+    expect(payload.blocked[0]).toBe(false);
+    expect(payload.blocked[1]).toContain("latest verification outcome is fail");
+    expect(payload.allowed[0]).toBe(true);
+    expect(payload.final_state.status).toBe("completed");
+    expect(payload.verify_content).toContain("## Round 1");
+    expect(payload.verify_content).toContain("## Round 2");
+  });
 });
 
 describe("regression: OMT definition layer", () => {
@@ -1643,6 +1807,48 @@ describe("regression: OMT OpenCode adapter", () => {
     expect(agents["omt-executor"].model).toBe("opus");
     expect(agents["omt-researcher"].model).toBe("haiku");
     expect(agents["omt-oracle"].model).toBe("opus");
+  });
+
+  it("[omt] command guards warn when execute or close preconditions are missing", async () => {
+    writeProjectFile(path.join(".trellis", ".current-task"), ".trellis/tasks/omt-guard-task\n");
+    writeProjectFile(
+      path.join(".trellis", "tasks", "omt-guard-task", "task.json"),
+      JSON.stringify(
+        {
+          title: "Guard task",
+          status: "planning",
+          current_phase: 0,
+          next_action: [],
+          meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const plugin = await omtCommandGuardsPlugin({ directory: tmpDir });
+    const executeOutput = { parts: [] as Array<{ type: string; text?: string }> };
+    await plugin["command.execute.before"]?.(
+      { command: "omt-execute", sessionID: "ses_1", arguments: "" },
+      executeOutput,
+    );
+    expect(executeOutput.parts[0]?.text).toContain("Execution is gated");
+
+    writeProjectFile(
+      path.join(".trellis", "tasks", "omt-guard-task", "review.md"),
+      "# Review\n\n## Round 1\n\n### Verdict\n\napproved\n",
+    );
+    writeProjectFile(
+      path.join(".trellis", "tasks", "omt-guard-task", "verify.md"),
+      "# Verify\n\n## Round 1\n\n### Outcome\n\nfail\n",
+    );
+
+    const closeOutput = { parts: [] as Array<{ type: string; text?: string }> };
+    await plugin["command.execute.before"]?.(
+      { command: "omt-close", sessionID: "ses_1", arguments: "" },
+      closeOutput,
+    );
+    expect(closeOutput.parts[0]?.text).toContain("Close is gated");
   });
 
   it("[omt] trellis hook arbitration skips when omo-owned hook exists", () => {
