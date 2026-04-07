@@ -1692,6 +1692,165 @@ print(json.dumps({
     expect(payload.verify_content).toContain("## Round 1");
     expect(payload.verify_content).toContain("## Round 2");
   });
+
+  it("[omt] fast close requires canonical headings and finalizes task", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-fast-close-task", {
+      title: "OMT fast close task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [],
+      meta: { workflow_id: "omt/v1", workflow_mode: "fast" },
+    });
+
+    const output = runPythonScript(
+      "fast_close.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.io import read_json
+from common.omt_workflow import write_fast_close, validate_transition, finalize_fast_close
+
+task_dir = Path(${JSON.stringify(taskDir)})
+write_fast_close(
+    task_dir,
+    "Deliver small fix",
+    ["single file"],
+    ["updated implementation"],
+    ["pnpm test passed"],
+    "completed",
+)
+close_gate = validate_transition(task_dir, "close")
+final_state = finalize_fast_close(task_dir)
+saved = read_json(task_dir / "task.json") or {}
+print(json.dumps({
+    "close_gate": close_gate,
+    "final_state": final_state,
+    "status": saved.get("status"),
+    "close_outcome": saved.get("meta", {}).get("close_outcome"),
+    "close_md": (task_dir / "close.md").read_text(encoding="utf-8"),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      close_gate: [boolean, string];
+      final_state: { status: string; workflow_mode: string };
+      status: string;
+      close_outcome: string;
+      close_md: string;
+    };
+    expect(payload.close_gate[0]).toBe(true);
+    expect(payload.status).toBe("completed");
+    expect(payload.close_outcome).toBe("completed");
+    expect(payload.close_md).toContain("## Intent");
+    expect(payload.close_md).toContain("## Scope");
+    expect(payload.close_md).toContain("## Changes");
+    expect(payload.close_md).toContain("## Verification");
+    expect(payload.close_md).toContain("## Outcome");
+  });
+
+  it("[omt] fast close is rejected when required headings are missing", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-fast-invalid-task", {
+      title: "OMT invalid fast close task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [],
+      meta: { workflow_id: "omt/v1", workflow_mode: "fast" },
+    });
+    fs.writeFileSync(path.join(taskDir, "close.md"), "# Close\n\n## Intent\n\nOnly partial\n", "utf-8");
+
+    const output = runPythonScript(
+      "fast_close_invalid.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.omt_workflow import validate_transition
+
+task_dir = Path(${JSON.stringify(taskDir)})
+result = validate_transition(task_dir, "close")
+print(json.dumps({"result": result}))
+`,
+    );
+
+    const payload = JSON.parse(output) as { result: [boolean, string] };
+    expect(payload.result[0]).toBe(false);
+    expect(payload.result[1]).toContain("required fast-close headings");
+  });
+
+  it("[omt] fast task promotion creates strict artifacts in place", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-promote-task", {
+      title: "OMT promote task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [],
+      meta: { workflow_id: "omt/v1", workflow_mode: "fast" },
+    });
+    fs.writeFileSync(path.join(taskDir, "close.md"), "# Close\n\n## Intent\n\nFast work\n\n## Scope\n\n- one area\n\n## Changes\n\n- change\n\n## Verification\n\n- test\n\n## Outcome\n\ncompleted\n", "utf-8");
+
+    const output = runPythonScript(
+      "promote_fast.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.io import read_json
+from common.omt_workflow import promote_fast_task
+
+task_dir = Path(${JSON.stringify(taskDir)})
+created = promote_fast_task(
+    task_dir,
+    ["multiple_subsystems", "reviewer_or_oracle_required"],
+    "Scope expanded beyond fast path",
+)
+saved = read_json(task_dir / "task.json") or {}
+print(json.dumps({
+    "created": created,
+    "workflow_mode": saved.get("meta", {}).get("workflow_mode"),
+    "promoted_from": saved.get("meta", {}).get("promoted_from"),
+    "promotion_triggers": saved.get("meta", {}).get("promotion_triggers"),
+    "has_plan": (task_dir / "plan.md").is_file(),
+    "has_review": (task_dir / "review.md").is_file(),
+    "has_execute": (task_dir / "execute.md").is_file(),
+    "has_verify": (task_dir / "verify.md").is_file(),
+    "has_close": (task_dir / "close.md").is_file(),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      created: string[];
+      workflow_mode: string;
+      promoted_from: string;
+      promotion_triggers: string[];
+      has_plan: boolean;
+      has_review: boolean;
+      has_execute: boolean;
+      has_verify: boolean;
+      has_close: boolean;
+    };
+    expect(payload.workflow_mode).toBe("strict");
+    expect(payload.promoted_from).toBe("fast");
+    expect(payload.promotion_triggers).toEqual([
+      "multiple_subsystems",
+      "reviewer_or_oracle_required",
+    ]);
+    expect(payload.has_plan).toBe(true);
+    expect(payload.has_review).toBe(true);
+    expect(payload.has_execute).toBe(true);
+    expect(payload.has_verify).toBe(true);
+    expect(payload.has_close).toBe(true);
+  });
 });
 
 describe("regression: OMT definition layer", () => {
