@@ -1874,6 +1874,58 @@ describe("regression: OMT definition layer", () => {
     );
     expect(rootConfig).toContain('"$schema": "./.omt/config/schema.json"');
   });
+
+  it("[omt] migration docs describe additive adoption and lazy task opt-in", () => {
+    const migrationDoc = fs.readFileSync(
+      path.join(repoRoot, ".omt", "migration.md"),
+      "utf-8",
+    );
+    expect(migrationDoc).toContain("additive");
+    expect(migrationDoc).toContain("Existing Trellis repositories can adopt OMT");
+    expect(migrationDoc).toContain("Lazy Task Adoption");
+    expect(migrationDoc).toContain("workflow_id");
+  });
+
+  it("[omt] skills docs distinguish Trellis core skills from imported OMO skills", () => {
+    const skillsDoc = fs.readFileSync(
+      path.join(repoRoot, ".omt", "skills.md"),
+      "utf-8",
+    );
+    expect(skillsDoc).toContain("Trellis Skills Kept As Core Workflow Skills");
+    expect(skillsDoc).toContain("Imported Portable OMO Skills");
+    expect(skillsDoc).toContain("git-master");
+    expect(skillsDoc).toContain("playwright");
+  });
+
+  it("[omt] v1.1 appendix records deferred feature evaluation", () => {
+    const appendix = fs.readFileSync(
+      path.join(repoRoot, ".omt", "v1-1-evaluation.md"),
+      "utf-8",
+    );
+    expect(appendix).toContain("Loops");
+    expect(appendix).toContain("Continuation Hooks");
+    expect(appendix).toContain("Auto-Slash Command");
+    expect(appendix).toContain("Recommendation");
+  });
+
+  it("[omt] backend spec index links OMT adoption guidance", () => {
+    const backendIndex = fs.readFileSync(
+      path.join(repoRoot, ".trellis", "spec", "cli", "backend", "index.md"),
+      "utf-8",
+    );
+    expect(backendIndex).toContain("OMT Adoption");
+    expect(backendIndex).toContain("omt-adoption.md");
+  });
+
+  it("[omt] root README mentions the OMT overlay", () => {
+    const readme = fs.readFileSync(
+      path.join(repoRoot, "README.md"),
+      "utf-8",
+    );
+    expect(readme).toContain("OMT Overlay in This Fork");
+    expect(readme).toContain("definition-only layer");
+    expect(readme).toContain("plan → review → execute");
+  });
 });
 
 describe("regression: OMT OpenCode adapter", () => {
