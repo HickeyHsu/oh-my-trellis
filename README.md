@@ -107,6 +107,17 @@ At a high level, the workflow is simple:
 3. Let Trellis inject the right context for the current task.
 4. Use checks, journals, and worktrees to keep quality and continuity intact.
 
+## OMT Overlay in This Fork
+
+This fork also carries an additive OMT workflow overlay.
+
+- Trellis still owns the durable project state in `.trellis/`
+- OMT lives in `.omt/` as a definition-only layer
+- OMT task artifacts still live in `.trellis/tasks/<task>/`
+- OpenCode-facing OMT commands and agents live beside Trellis ones under `.opencode/`
+
+Use OMT when you want a stricter plan → review → execute workflow overlay while keeping stock Trellis task storage intact.
+
 ## Spec Templates & Marketplace
 
 Specs ship as empty templates by default — they are meant to be customized for your project's stack and conventions. You can fill them from scratch, or start from a community template:

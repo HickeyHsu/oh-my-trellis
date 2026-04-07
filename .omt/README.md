@@ -2,6 +2,13 @@
 
 This directory is the project-level workflow definition layer for OMT.
 
+OMT is an additive workflow overlay on top of Trellis:
+
+- Trellis remains the durable source of truth
+- `.omt/` stores reusable workflow definitions only
+- `.trellis/tasks/<task>/` stores task-instance artifacts
+- OpenCode adapter files stay under `.opencode/`
+
 ## Ownership
 
 | Path | Purpose | Runtime writes allowed |
@@ -37,3 +44,16 @@ Fast tasks must be promoted to strict mode in place when any of these triggers a
 - `multiple_subsystems`
 - `public_interface_change`
 - `reviewer_or_oracle_required`
+
+## Command Namespaces
+
+- `/trellis:*` = base Trellis workflow
+- `/omt-*` = OMT overlay workflow
+
+They intentionally coexist.
+
+## Related Docs
+
+- [`migration.md`](./migration.md) - additive adoption and legacy-task guidance
+- [`skills.md`](./skills.md) - Trellis skill reuse + imported OMO skills
+- [`v1-1-evaluation.md`](./v1-1-evaluation.md) - deferred feature evaluation for loops, continuation hooks, and auto-slash
