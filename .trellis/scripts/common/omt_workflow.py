@@ -15,9 +15,14 @@ REVIEW_MODES = ("default", "metis", "momus")
 APPROVED_VERDICTS = {"approved", "pass", "passed"}
 VERIFY_OUTCOMES = {"pass", "fail", "human-needed"}
 CLOSEABLE_VERIFY_OUTCOMES = {"pass", "human-needed"}
+PROMOTION_TRIGGERS = {
+    "multiple_subsystems",
+    "public_interface_change",
+    "reviewer_or_oracle_required",
+}
 
 
-def detect_task_mode(task_data: dict) -> str | None:
+def detect_task_mode(task_data: dict[str, object]) -> str | None:
     mode = get_workflow_mode(task_data)
     if mode in ("strict", "fast"):
         return mode
@@ -70,7 +75,7 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _ensure_omt_task(task_dir: Path, mode: str | None = None) -> dict:
+def _ensure_omt_task(task_dir: Path, mode: str | None = None) -> dict[str, object]:
     task_data = read_json(task_dir / "task.json")
     if not task_data:
         raise ValueError("task.json is missing or invalid")
@@ -133,6 +138,57 @@ def _bullet_lines(items: list[str], checkbox: bool = False) -> list[str]:
         return []
     prefix = "- [ ] " if checkbox else "- "
     return [f"{prefix}{item}" for item in items]
+
+
+def _normalize_triggers(triggers: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for trigger in triggers:
+        value = trigger.strip().lower()
+        if value in PROMOTION_TRIGGERS and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _render_fast_close_content(
+    task_dir: Path,
+    intent: str,
+    scope: list[str],
+    changes: list[str],
+    verification: list[str],
+    outcome: str,
+) -> str:
+    sections = {
+        "Intent": [intent or "TBD"],
+        "Scope": _bullet_lines(scope),
+        "Changes": _bullet_lines(changes),
+        "Verification": _bullet_lines(verification),
+        "Outcome": [outcome or "TBD"],
+    }
+
+    lines = ["# Close", "", f"Task: `{task_dir.name}`", ""]
+    for heading in FAST_CLOSE_HEADINGS:
+        lines.append(f"## {heading}")
+        lines.append("")
+        body = sections.get(heading, [])
+        if body:
+            lines.extend(body)
+        else:
+            lines.append("TBD")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def fast_close_has_required_headings(task_dir: Path) -> bool:
+    close_path = task_dir / "close.md"
+    content = _read_text(close_path)
+    if not content.strip():
+        return False
+    return all(f"## {heading}" in content for heading in FAST_CLOSE_HEADINGS)
+
+
+def should_promote_fast_task(triggers: list[str]) -> tuple[bool, list[str]]:
+    normalized = _normalize_triggers(triggers)
+    return bool(normalized), normalized
 
 
 def write_plan_round(
@@ -330,6 +386,22 @@ def write_close_round(
     return round_number
 
 
+def write_fast_close(
+    task_dir: Path,
+    intent: str,
+    scope: list[str],
+    changes: list[str],
+    verification: list[str],
+    outcome: str,
+) -> None:
+    _ensure_omt_task(task_dir, "fast")
+    close_path = task_dir / "close.md"
+    _write_text(
+        close_path,
+        _render_fast_close_content(task_dir, intent, scope, changes, verification, outcome),
+    )
+
+
 def finalize_close(task_dir: Path) -> dict[str, object | None]:
     task_json = task_dir / "task.json"
     task_data = _ensure_omt_task(task_dir, "strict")
@@ -375,6 +447,49 @@ def finalize_close(task_dir: Path) -> dict[str, object | None]:
     }
 
 
+def finalize_fast_close(task_dir: Path) -> dict[str, object | None]:
+    task_json = task_dir / "task.json"
+    task_data = _ensure_omt_task(task_dir, "fast")
+    if not fast_close_has_required_headings(task_dir):
+        raise ValueError("close.md is missing required fast-close headings")
+
+    task_data["status"] = "completed"
+    task_data["completedAt"] = datetime.now().strftime("%Y-%m-%d")
+
+    meta = ensure_meta_dict(task_data)
+    meta["close_outcome"] = "completed"
+
+    if not write_json(task_json, task_data):
+        raise ValueError("failed to write task.json")
+
+    return {
+        "status": task_data.get("status"),
+        "completedAt": task_data.get("completedAt"),
+        "workflow_mode": meta.get("workflow_mode"),
+    }
+
+
+def promote_fast_task(task_dir: Path, triggers: list[str], reason: str = "") -> list[str]:
+    task_json = task_dir / "task.json"
+    task_data = _ensure_omt_task(task_dir, "fast")
+    should_promote, normalized = should_promote_fast_task(triggers)
+    if not should_promote:
+        return []
+
+    set_omt_workflow(task_data, "strict")
+    meta = ensure_meta_dict(task_data)
+    meta["promoted_from"] = "fast"
+    meta["promotion_triggers"] = normalized
+    meta["promoted_at"] = datetime.now().strftime("%Y-%m-%d")
+    if reason:
+        meta["promotion_reason"] = reason
+
+    if not write_json(task_json, task_data):
+        raise ValueError("failed to write task.json")
+
+    return scaffold_strict_artifacts(task_dir)
+
+
 def validate_transition(task_dir: Path, target_action: str) -> tuple[bool, str]:
     task_json = task_dir / "task.json"
     task_data = read_json(task_json)
@@ -407,6 +522,9 @@ def validate_transition(task_dir: Path, target_action: str) -> tuple[bool, str]:
 
     if key == "strict:close":
         return can_close(task_dir)
+
+    if key == "fast:close" and not fast_close_has_required_headings(task_dir):
+        return False, "close.md is missing required fast-close headings"
 
     return True, "ok"
 
