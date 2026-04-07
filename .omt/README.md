@@ -21,3 +21,19 @@ Task-instance outputs belong under `.trellis/tasks/<task>/`.
 2. `oh-my-trellis.jsonc`
 
 The project-root file is the user/project override layer and wins over framework defaults.
+
+## Workflow Modes
+
+- `strict`: uses `plan.md`, `review.md`, `execute.md`, `verify.md`, and `close.md`
+- `fast`: uses only `close.md`, but that file must still include:
+  - `## Intent`
+  - `## Scope`
+  - `## Changes`
+  - `## Verification`
+  - `## Outcome`
+
+Fast tasks must be promoted to strict mode in place when any of these triggers apply:
+
+- `multiple_subsystems`
+- `public_interface_change`
+- `reviewer_or_oracle_required`

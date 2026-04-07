@@ -18,3 +18,8 @@ Provide:
 2. Workflow mode if the task is OMT-managed
 3. Missing artifacts, if any
 4. Recommended next command
+
+Fast-mode guidance:
+
+- Fast tasks should only rely on `close.md`
+- If the task now spans multiple subsystems, changes a public interface, or needs reviewer/oracle involvement, promote it to strict mode in place
