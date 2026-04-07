@@ -1195,9 +1195,18 @@ import sys
 sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
 
 from common.omt_workflow import scaffold_strict_artifacts, validate_transition
+from common.omt_workflow import write_review_round
 
 task_dir = Path(${JSON.stringify(taskDir)})
 created = scaffold_strict_artifacts(task_dir)
+write_review_round(
+    task_dir,
+    "default",
+    "approved",
+    [],
+    ["Ready for execution"],
+    "high",
+)
 execute_result = validate_transition(task_dir, "execute")
 close_result = validate_transition(task_dir, "close")
 print(json.dumps({
@@ -1392,6 +1401,132 @@ print(json.dumps(resolved))
     expect(payload.context_entries.some((entry) => entry.path === "src/sample.ts")).toBe(true);
     expect(payload.extra_files.some((entry) => entry.path.endsWith("/prd.md"))).toBe(true);
     expect(payload.extra_files.some((entry) => entry.path.endsWith("/plan.md"))).toBe(true);
+  });
+
+  it("[omt] strict planning appends canonical plan rounds", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-plan-task", {
+      title: "OMT plan task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [{ phase: 1, action: "implement" }],
+      meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+    });
+
+    const output = runPythonScript(
+      "write_plan_rounds.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.omt_workflow import write_plan_round
+
+task_dir = Path(${JSON.stringify(taskDir)})
+first_round = write_plan_round(
+    task_dir,
+    "Ship the planner",
+    ["Read task", "Write plan"],
+    ["Spec drift"],
+    ["Tests pass"],
+)
+second_round = write_plan_round(
+    task_dir,
+    "Revise the planner",
+    ["Update steps"],
+    ["Review churn"],
+    ["Plan approved"],
+)
+content = (task_dir / "plan.md").read_text(encoding="utf-8")
+print(json.dumps({
+    "first_round": first_round,
+    "second_round": second_round,
+    "content": content,
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      first_round: number;
+      second_round: number;
+      content: string;
+    };
+    expect(payload.first_round).toBe(1);
+    expect(payload.second_round).toBe(2);
+    expect(payload.content).toContain("## Round 1");
+    expect(payload.content).toContain("## Round 2");
+    expect(payload.content).toContain("### Goal Summary");
+    expect(payload.content).toContain("### Verification Checklist");
+  });
+
+  it("[omt] strict review approval gates execute transitions", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-review-task", {
+      title: "OMT review task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [{ phase: 1, action: "implement" }],
+      meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+    });
+    fs.writeFileSync(path.join(taskDir, "plan.md"), "# Plan\n", "utf-8");
+
+    const output = runPythonScript(
+      "review_gate.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.omt_workflow import write_review_round, validate_transition
+
+task_dir = Path(${JSON.stringify(taskDir)})
+round_one = write_review_round(
+    task_dir,
+    "default",
+    "required_changes",
+    ["Clarify scope"],
+    ["Tighten verification"],
+    "medium",
+)
+blocked = validate_transition(task_dir, "execute")
+round_two = write_review_round(
+    task_dir,
+    "momus",
+    "approved",
+    [],
+    ["Looks good"],
+    "high",
+)
+allowed = validate_transition(task_dir, "execute")
+content = (task_dir / "review.md").read_text(encoding="utf-8")
+print(json.dumps({
+    "round_one": round_one,
+    "round_two": round_two,
+    "blocked": blocked,
+    "allowed": allowed,
+    "content": content,
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      round_one: number;
+      round_two: number;
+      blocked: [boolean, string];
+      allowed: [boolean, string];
+      content: string;
+    };
+    expect(payload.round_one).toBe(1);
+    expect(payload.round_two).toBe(2);
+    expect(payload.blocked[0]).toBe(false);
+    expect(payload.blocked[1]).toContain("not approved");
+    expect(payload.allowed[0]).toBe(true);
+    expect(payload.content).toContain("### Verdict");
+    expect(payload.content).toContain("required_changes");
+    expect(payload.content).toContain("approved");
+    expect(payload.content).toContain("### Mode");
   });
 });
 
