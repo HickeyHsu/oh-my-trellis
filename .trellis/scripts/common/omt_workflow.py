@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from datetime import datetime
 import re
 from pathlib import Path
 
 from .io import read_json, write_json
-from .omt import get_workflow_mode, set_omt_workflow
+from .omt import ensure_meta_dict, get_workflow_mode, set_omt_workflow
 
 STRICT_ARTIFACTS = ("plan.md", "review.md", "execute.md", "verify.md", "close.md")
 FAST_ARTIFACTS = ("close.md",)
 FAST_CLOSE_HEADINGS = ("Intent", "Scope", "Changes", "Verification", "Outcome")
 REVIEW_MODES = ("default", "metis", "momus")
 APPROVED_VERDICTS = {"approved", "pass", "passed"}
+VERIFY_OUTCOMES = {"pass", "fail", "human-needed"}
+CLOSEABLE_VERIFY_OUTCOMES = {"pass", "human-needed"}
 
 
 def detect_task_mode(task_data: dict) -> str | None:
@@ -203,6 +206,175 @@ def is_review_approved(task_dir: Path) -> bool:
     return verdict in APPROVED_VERDICTS
 
 
+def _update_task_meta(task_dir: Path, updates: dict[str, object | None]) -> None:
+    task_json = task_dir / "task.json"
+    task_data = read_json(task_json)
+    if not task_data:
+        raise ValueError("task.json is missing or invalid")
+
+    meta = ensure_meta_dict(task_data)
+    for key, value in updates.items():
+        if value is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = value
+
+    if not write_json(task_json, task_data):
+        raise ValueError("failed to write task.json")
+
+
+def write_execute_round(
+    task_dir: Path,
+    changed_files: list[str],
+    implementation_notes: list[str],
+    validation_results: list[str],
+    remaining_issues: list[str],
+) -> int:
+    _ensure_omt_task(task_dir, "strict")
+    execute_path = task_dir / "execute.md"
+    round_number = _append_round(
+        execute_path,
+        "Execute",
+        [
+            ("Files Changed", _bullet_lines(changed_files)),
+            ("Implementation Notes", _bullet_lines(implementation_notes)),
+            ("Validation Results", _bullet_lines(validation_results)),
+            ("Remaining Issues", _bullet_lines(remaining_issues)),
+        ],
+    )
+    _update_task_meta(task_dir, {"last_execution_round": round_number})
+    return round_number
+
+
+def write_verify_round(
+    task_dir: Path,
+    outcome: str,
+    requirement_checks: list[str],
+    validation_results: list[str],
+    follow_up: list[str],
+) -> int:
+    _ensure_omt_task(task_dir, "strict")
+    normalized_outcome = outcome.strip().lower()
+    if normalized_outcome not in VERIFY_OUTCOMES:
+        allowed = ", ".join(sorted(VERIFY_OUTCOMES))
+        raise ValueError(f"invalid verify outcome: {outcome} (expected one of: {allowed})")
+
+    verify_path = task_dir / "verify.md"
+    round_number = _append_round(
+        verify_path,
+        "Verify",
+        [
+            ("Outcome", normalized_outcome),
+            ("Requirement Checks", _bullet_lines(requirement_checks, checkbox=True)),
+            ("Validation Results", _bullet_lines(validation_results)),
+            ("Follow Up", _bullet_lines(follow_up)),
+        ],
+    )
+    _update_task_meta(
+        task_dir,
+        {
+            "verification_outcome": normalized_outcome,
+            "last_verify_round": round_number,
+        },
+    )
+    return round_number
+
+
+def get_latest_verify_outcome(task_dir: Path) -> str | None:
+    verify_path = task_dir / "verify.md"
+    content = _read_text(verify_path)
+    if not content.strip():
+        return None
+
+    matches = re.findall(
+        r"^### Outcome\n\n([^\n]+)$",
+        content,
+        flags=re.MULTILINE,
+    )
+    if not matches:
+        return None
+    return matches[-1].strip().lower()
+
+
+def can_close(task_dir: Path) -> tuple[bool, str]:
+    outcome = get_latest_verify_outcome(task_dir)
+    if outcome is None:
+        return False, "verify.md is present but has no verification outcome"
+    if outcome not in CLOSEABLE_VERIFY_OUTCOMES:
+        return False, f"latest verification outcome is {outcome}"
+    return True, "ok"
+
+
+def write_close_round(
+    task_dir: Path,
+    intent: str,
+    scope: list[str],
+    changes: list[str],
+    verification: list[str],
+    outcome: str,
+) -> int:
+    _ensure_omt_task(task_dir, "strict")
+    close_path = task_dir / "close.md"
+    round_number = _append_round(
+        close_path,
+        "Close",
+        [
+            ("Intent", intent or "TBD"),
+            ("Scope", _bullet_lines(scope)),
+            ("Changes", _bullet_lines(changes)),
+            ("Verification", _bullet_lines(verification)),
+            ("Outcome", outcome or "TBD"),
+        ],
+    )
+    _update_task_meta(task_dir, {"last_close_round": round_number})
+    return round_number
+
+
+def finalize_close(task_dir: Path) -> dict[str, object | None]:
+    task_json = task_dir / "task.json"
+    task_data = _ensure_omt_task(task_dir, "strict")
+    allowed, message = can_close(task_dir)
+    if not allowed:
+        raise ValueError(message)
+
+    verify_outcome = get_latest_verify_outcome(task_dir)
+    if verify_outcome is None:
+        raise ValueError("verify outcome is missing")
+
+    close_phase = 0
+    next_action = task_data.get("next_action", [])
+    if isinstance(next_action, list):
+        for item in next_action:
+            if isinstance(item, dict) and item.get("action") == "close":
+                close_phase = item.get("phase", 0)
+                break
+
+    meta = ensure_meta_dict(task_data)
+    meta["verification_outcome"] = verify_outcome
+
+    if verify_outcome == "pass":
+        task_data["status"] = "completed"
+        task_data["completedAt"] = datetime.now().strftime("%Y-%m-%d")
+        meta["close_outcome"] = "completed"
+    else:
+        task_data["status"] = "blocked"
+        task_data["completedAt"] = None
+        meta["close_outcome"] = verify_outcome
+
+    if close_phase:
+        task_data["current_phase"] = close_phase
+
+    if not write_json(task_json, task_data):
+        raise ValueError("failed to write task.json")
+
+    return {
+        "status": task_data.get("status"),
+        "completedAt": task_data.get("completedAt"),
+        "verification_outcome": verify_outcome,
+        "current_phase": task_data.get("current_phase"),
+    }
+
+
 def validate_transition(task_dir: Path, target_action: str) -> tuple[bool, str]:
     task_json = task_dir / "task.json"
     task_data = read_json(task_json)
@@ -232,6 +404,9 @@ def validate_transition(task_dir: Path, target_action: str) -> tuple[bool, str]:
 
     if key == "strict:execute" and not is_review_approved(task_dir):
         return False, "review.md is present but not approved"
+
+    if key == "strict:close":
+        return can_close(task_dir)
 
     return True, "ok"
 

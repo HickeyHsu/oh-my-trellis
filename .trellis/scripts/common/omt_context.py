@@ -285,6 +285,7 @@ def get_omt_agent_json(
         task.get("artifacts", {}).get("review"),
         task.get("artifacts", {}).get("execute"),
         task.get("artifacts", {}).get("verify"),
+        task.get("artifacts", {}).get("close"),
     ]:
         if not isinstance(relative_path, str):
             continue
