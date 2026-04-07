@@ -1325,6 +1325,74 @@ print(json.dumps(resolved))
     expect(payload.routing.tiers.high).toBe("high-override");
     expect(payload.routing.executor.strict).toBe("high");
   });
+
+  it("[omt] session bundle mode includes task metadata and omt command context", () => {
+    writeTrellisScripts();
+    writeProjectFile(path.join(".trellis", ".developer"), "name=test-dev\n",);
+    writeProjectFile(path.join(".trellis", "workflow.md"), "# Workflow\n");
+    writeProjectFile(path.join(".trellis", ".current-task"), ".trellis/tasks/omt-session-task\n");
+    writeProjectFile(path.join(".trellis", "spec", "guides", "index.md"), "# Guides\n");
+    writeProjectFile(path.join(".omt", "commands", "omt-start.md"), "# OMT Start\n");
+    const taskDir = writeTaskJson("omt-session-task", {
+      title: "OMT session task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [{ phase: 1, action: "implement" }],
+      meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+    });
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Task\n\n## Goal\nShip it\n\n## Requirements\n- keep API\n\n## Acceptance Criteria\n- [ ] tests pass\n", "utf-8");
+
+    const output = execSync(
+      `${pythonCmd} ${JSON.stringify(path.join(tmpDir, ".trellis", "scripts", "get_context.py"))} --mode omt-session --json`,
+      { cwd: tmpDir, encoding: "utf-8" },
+    );
+
+    const payload = JSON.parse(output) as {
+      mode: string;
+      task: { workflow_id: string; workflow_mode: string; goal: string; acceptance_criteria: string[] };
+      omt_start: { path: string; content: string };
+    };
+    expect(payload.mode).toBe("omt-session");
+    expect(payload.task.workflow_id).toBe("omt/v1");
+    expect(payload.task.workflow_mode).toBe("strict");
+    expect(payload.task.goal).toBe("Ship it");
+    expect(payload.task.acceptance_criteria).toContain("tests pass");
+    expect(payload.omt_start.path).toBe(".omt/commands/omt-start.md");
+  });
+
+  it("[omt] agent bundle mode resolves implement context entries and artifacts", () => {
+    writeTrellisScripts();
+    writeProjectFile(path.join(".trellis", ".developer"), "name=test-dev\n");
+    writeProjectFile(path.join(".trellis", ".current-task"), ".trellis/tasks/omt-agent-task\n");
+    const taskDir = writeTaskJson("omt-agent-task", {
+      title: "OMT agent task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [{ phase: 1, action: "implement" }],
+      meta: { workflow_id: "omt/v1", workflow_mode: "strict" },
+    });
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Task\n\n## Goal\nBuild feature\n", "utf-8");
+    fs.writeFileSync(path.join(taskDir, "plan.md"), "# Plan\n", "utf-8");
+    writeProjectFile(path.join("src", "sample.ts"), "export const sample = true;\n");
+    fs.writeFileSync(path.join(taskDir, "implement.jsonl"), '{"file":"src/sample.ts","reason":"Implementation context"}\n', "utf-8");
+
+    const output = execSync(
+      `${pythonCmd} ${JSON.stringify(path.join(tmpDir, ".trellis", "scripts", "get_context.py"))} --mode omt-agent --agent implement --json`,
+      { cwd: tmpDir, encoding: "utf-8" },
+    );
+
+    const payload = JSON.parse(output) as {
+      mode: string;
+      agent: string;
+      context_entries: Array<{ path: string; content: string }>;
+      extra_files: Array<{ path: string; content: string }>;
+    };
+    expect(payload.mode).toBe("omt-agent");
+    expect(payload.agent).toBe("implement");
+    expect(payload.context_entries.some((entry) => entry.path === "src/sample.ts")).toBe(true);
+    expect(payload.extra_files.some((entry) => entry.path.endsWith("/prd.md"))).toBe(true);
+    expect(payload.extra_files.some((entry) => entry.path.endsWith("/plan.md"))).toBe(true);
+  });
 });
 
 describe("regression: OMT definition layer", () => {
