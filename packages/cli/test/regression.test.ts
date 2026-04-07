@@ -60,6 +60,12 @@ import {
 import { guidesIndexContent, workspaceIndexContent } from "../src/templates/markdown/index.js";
 import * as markdownExports from "../src/templates/markdown/index.js";
 import { TrellisContext } from "../src/templates/opencode/lib/trellis-context.js";
+import omtConfigPlugin from "../src/templates/opencode/plugins/omt-config.js";
+import {
+  loadOmtConfig,
+  resolveOmtModel,
+  resolveOmtTier,
+} from "../src/templates/opencode/lib/omt-config.js";
 
 afterEach(() => {
   clearManifestCache();
@@ -1341,6 +1347,124 @@ describe("regression: OMT definition layer", () => {
       "utf-8",
     );
     expect(rootConfig).toContain('"$schema": "./.omt/config/schema.json"');
+  });
+});
+
+describe("regression: OMT OpenCode adapter", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-omt-opencode-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeProjectFile(relativePath: string, content: string): void {
+    const absPath = path.join(tmpDir, relativePath);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, content, "utf-8");
+  }
+
+  it("[omt] routing resolves low/high tiers from dual-layer config", () => {
+    writeProjectFile(
+      path.join(".omt", "config", "oh-my-trellis.defaults.jsonc"),
+      JSON.stringify(
+        {
+          routing: {
+            enabled: true,
+            tiers: { low: "mini", high: "gpt-5.4" },
+            roles: { planner: "high", reviewer: "high", oracle: "high", researcher: "low" },
+            executor: { fast: "low", strict: "high" },
+          },
+          skills: { browser_default: "playwright" },
+        },
+        null,
+        2,
+      ),
+    );
+    writeProjectFile(
+      "oh-my-trellis.jsonc",
+      JSON.stringify({ routing: { tiers: { low: "haiku", high: "opus" } } }, null, 2),
+    );
+
+    const config = loadOmtConfig(tmpDir) as {
+      routing: { tiers: { low: string; high: string } };
+    };
+    expect(resolveOmtTier(config, "planner")).toBe("high");
+    expect(resolveOmtTier(config, "researcher")).toBe("low");
+    expect(resolveOmtTier(config, "executor", "fast")).toBe("low");
+    expect(resolveOmtTier(config, "executor", "strict")).toBe("high");
+    expect(resolveOmtModel(config, "planner")).toBe("opus");
+    expect(resolveOmtModel(config, "researcher")).toBe("haiku");
+  });
+
+  it("[omt] config plugin applies resolved models to omt agents", async () => {
+    writeProjectFile(
+      path.join(".omt", "config", "oh-my-trellis.defaults.jsonc"),
+      JSON.stringify(
+        {
+          routing: {
+            enabled: true,
+            tiers: { low: "mini", high: "gpt-5.4" },
+            roles: { planner: "high", reviewer: "high", oracle: "high", researcher: "low" },
+            executor: { fast: "low", strict: "high" },
+          },
+          skills: { browser_default: "playwright" },
+        },
+        null,
+        2,
+      ),
+    );
+    writeProjectFile(
+      "oh-my-trellis.jsonc",
+      JSON.stringify({ routing: { tiers: { low: "haiku", high: "opus" } } }, null, 2),
+    );
+
+    const plugin = await omtConfigPlugin({ directory: tmpDir });
+    const config: Record<string, unknown> = {
+      agent: {
+        "omt-planner": {},
+        "omt-reviewer": {},
+        "omt-executor": {},
+        "omt-researcher": {},
+        "omt-oracle": {},
+      },
+    };
+
+    await plugin.config(config);
+    const agents = config.agent as Record<string, { model?: string }>;
+    expect(agents["omt-planner"].model).toBe("opus");
+    expect(agents["omt-reviewer"].model).toBe("opus");
+    expect(agents["omt-executor"].model).toBe("opus");
+    expect(agents["omt-researcher"].model).toBe("haiku");
+    expect(agents["omt-oracle"].model).toBe("opus");
+  });
+
+  it("[omt] trellis hook arbitration skips when omo-owned hook exists", () => {
+    writeProjectFile(path.join(".trellis", "workflow.md"), "# Workflow\n");
+    writeProjectFile(path.join(".claude", "hooks", "session-start.py"), "print('hook')\n");
+    const ctx = new TrellisContext(tmpDir) as TrellisContext & {
+      _omoInstalled: boolean | null;
+      _omoHooksEnabled: boolean | null;
+      shouldSkipHook: (hookName: string) => boolean;
+    };
+    ctx._omoInstalled = true;
+    ctx._omoHooksEnabled = true;
+    expect(ctx.shouldSkipHook("session-start")).toBe(true);
+  });
+
+  it("[omt] trellis hook arbitration handles when no matching omo hook exists", () => {
+    writeProjectFile(path.join(".trellis", "workflow.md"), "# Workflow\n");
+    const ctx = new TrellisContext(tmpDir) as TrellisContext & {
+      _omoInstalled: boolean | null;
+      _omoHooksEnabled: boolean | null;
+      shouldSkipHook: (hookName: string) => boolean;
+    };
+    ctx._omoInstalled = true;
+    ctx._omoHooksEnabled = true;
+    expect(ctx.shouldSkipHook("session-start")).toBe(false);
   });
 });
 

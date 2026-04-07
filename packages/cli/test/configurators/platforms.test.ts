@@ -190,6 +190,15 @@ describe("configurePlatform", () => {
     expect(fs.existsSync(path.join(tmpDir, ".opencode"))).toBe(true);
   });
 
+  it("configurePlatform('opencode') copies OMT commands, agents, skills, and plugins", async () => {
+    await configurePlatform("opencode", tmpDir);
+    expect(fs.existsSync(path.join(tmpDir, ".opencode", "commands", "omt-start.md"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".opencode", "agents", "omt-planner.md"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".opencode", "skills", "git-master", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".opencode", "plugins", "omt-config.js"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".opencode", "lib", "omt-config.js"))).toBe(true);
+  });
+
   it("configurePlatform('codex') creates .agents/skills directory", async () => {
     await configurePlatform("codex", tmpDir);
     expect(fs.existsSync(path.join(tmpDir, ".agents", "skills"))).toBe(true);
