@@ -996,6 +996,169 @@ describe("regression: current-task path normalization", () => {
   });
 });
 
+describe("regression: OMT additive task compatibility", () => {
+  let tmpDir: string;
+  const pythonCmd = process.platform === "win32" ? "python" : "python3";
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-omt-meta-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeTrellisScripts(): void {
+    const scriptsDir = path.join(tmpDir, ".trellis", "scripts");
+    for (const [relativePath, content] of getAllScripts()) {
+      const absPath = path.join(scriptsDir, relativePath);
+      fs.mkdirSync(path.dirname(absPath), { recursive: true });
+      fs.writeFileSync(absPath, content, "utf-8");
+    }
+  }
+
+  function writeTaskJson(taskName: string, taskJson: Record<string, unknown>): string {
+    const taskDir = path.join(tmpDir, ".trellis", "tasks", taskName);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(taskDir, "task.json"),
+      JSON.stringify(taskJson, null, 2),
+      "utf-8",
+    );
+    return taskDir;
+  }
+
+  function runPythonScript(filename: string, content: string): string {
+    const scriptPath = path.join(tmpDir, filename);
+    fs.writeFileSync(scriptPath, content, "utf-8");
+    return execSync(`${pythonCmd} ${JSON.stringify(scriptPath)}`, {
+      cwd: tmpDir,
+      encoding: "utf-8",
+    });
+  }
+
+  it("[omt] pre-OMT tasks still load via task.py list without migration", () => {
+    writeTrellisScripts();
+    fs.writeFileSync(
+      path.join(tmpDir, ".trellis", ".developer"),
+      "name=test-dev\ninitialized_at=2026-04-07T00:00:00\n",
+      "utf-8",
+    );
+    writeTaskJson("legacy-task", {
+      title: "Legacy task",
+      status: "planning",
+      assignee: "test-dev",
+      priority: "P2",
+      children: [],
+      parent: null,
+      package: null,
+      meta: {},
+    });
+
+    const output = execSync(
+      `${pythonCmd} ${JSON.stringify(path.join(tmpDir, ".trellis", "scripts", "task.py"))} list`,
+      {
+        cwd: tmpDir,
+        encoding: "utf-8",
+      },
+    );
+
+    expect(output).toContain("legacy-task/");
+  });
+
+  it("[omt] workflow markers are stored additively under task.json meta", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-task", {
+      title: "OMT task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [{ phase: 1, action: "implement" }],
+      meta: {},
+    });
+
+    const output = runPythonScript(
+      "mark_omt.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.io import read_json, write_json
+from common.omt import is_omt_managed, set_omt_workflow
+
+task_json = Path(${JSON.stringify(path.join(taskDir, "task.json"))})
+data = read_json(task_json) or {}
+set_omt_workflow(data, "strict")
+write_json(task_json, data)
+saved = read_json(task_json) or {}
+print(json.dumps({
+    "workflow_id": saved.get("meta", {}).get("workflow_id"),
+    "workflow_mode": saved.get("meta", {}).get("workflow_mode"),
+    "managed": is_omt_managed(saved),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      workflow_id: string;
+      workflow_mode: string;
+      managed: boolean;
+    };
+    expect(payload.workflow_id).toBe("omt/v1");
+    expect(payload.workflow_mode).toBe("strict");
+    expect(payload.managed).toBe(true);
+  });
+
+  it("[omt] existing phase writers preserve additive workflow metadata", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-phase-task", {
+      title: "OMT phase task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [
+        { phase: 1, action: "implement" },
+        { phase: 2, action: "check" },
+      ],
+      meta: {
+        workflow_id: "omt/v1",
+        workflow_mode: "fast",
+      },
+    });
+
+    const output = runPythonScript(
+      "advance_phase.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.io import read_json
+from common.phase import set_phase
+
+task_json = Path(${JSON.stringify(path.join(taskDir, "task.json"))})
+set_phase(task_json, 2)
+saved = read_json(task_json) or {}
+print(json.dumps({
+    "current_phase": saved.get("current_phase"),
+    "workflow_id": saved.get("meta", {}).get("workflow_id"),
+    "workflow_mode": saved.get("meta", {}).get("workflow_mode"),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      current_phase: number;
+      workflow_id: string;
+      workflow_mode: string;
+    };
+    expect(payload.current_phase).toBe(2);
+    expect(payload.workflow_id).toBe("omt/v1");
+    expect(payload.workflow_mode).toBe("fast");
+  });
+});
+
 describe("regression: backslash in markdown templates (beta.12)", () => {
   it("[beta.12] Claude command templates do not contain problematic backslash sequences", () => {
     const commands = getClaudeCommands();
