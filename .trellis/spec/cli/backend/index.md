@@ -21,6 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Done |
 | [Migrations](./migrations.md) | Version migration system for template files | Done |
 | [Platform Integration](./platform-integration.md) | How to add support for new AI CLI platforms | Done |
+| [OMT Compatibility](./omt-compatibility.md) | Additive compatibility rules for OMT task metadata and phase mapping | Done |
 ---
 
 ## Pre-Development Checklist
@@ -32,6 +33,7 @@ Before writing backend code, read the relevant guidelines based on your task:
 - Adding a platform → [platform-integration.md](./platform-integration.md)
 - Script work → [script-conventions.md](./script-conventions.md)
 - Migration system → [migrations.md](./migrations.md)
+- OMT task-state compatibility → [omt-compatibility.md](./omt-compatibility.md)
 
 Also read [unit-test/conventions.md](../unit-test/conventions.md) — specifically the "When to Write Tests" section.
 
