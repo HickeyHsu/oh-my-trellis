@@ -1,59 +1,12 @@
-import { existsSync, writeFileSync, readdirSync } from "fs"
+import { existsSync, readdirSync } from "fs"
 import { join } from "path"
-import { execFileSync } from "child_process"
-import { platform } from "os"
 import { TrellisContext, debugLog } from "../lib/trellis-context.js"
 
-const PYTHON_CMD = platform() === "win32" ? "python" : "python3"
 const AGENTS_ALL = ["implement", "check", "debug", "research", "planner", "reviewer", "executor", "oracle"]
 const AGENTS_REQUIRE_TASK = ["implement", "check", "debug", "planner", "reviewer", "executor", "oracle"]
-const AGENTS_NO_PHASE_UPDATE = ["debug", "research", "planner", "reviewer", "executor", "oracle"]
-
-function updateCurrentPhase(ctx, taskDir, subagentType) {
-  if (AGENTS_NO_PHASE_UPDATE.includes(subagentType)) {
-    return
-  }
-
-  const taskJsonPath = join(ctx.directory, taskDir, "task.json")
-  const content = ctx.readFile(taskJsonPath)
-  if (!content) return
-
-  try {
-    const taskData = JSON.parse(content)
-    const currentPhase = taskData.current_phase || 0
-    const nextActions = taskData.next_action || []
-
-    const actionToAgent = {
-      "implement": "implement",
-      "check": "check",
-      "finish": "check"
-    }
-
-    let newPhase = null
-    for (const action of nextActions) {
-      const phaseNum = action.phase || 0
-      const actionName = action.action || ""
-      const expectedAgent = actionToAgent[actionName]
-
-      if (phaseNum > currentPhase && expectedAgent === subagentType) {
-        newPhase = phaseNum
-        break
-      }
-    }
-
-    if (newPhase !== null) {
-      taskData.current_phase = newPhase
-      writeFileSync(taskJsonPath, JSON.stringify(taskData, null, 2))
-      debugLog("inject", "Updated current_phase to:", newPhase)
-    }
-  } catch (e) {
-    debugLog("inject", "Error updating phase:", e.message)
-  }
-}
 
 function getImplementContext(ctx, taskDir) {
   const parts = []
-
   let jsonlPath = join(ctx.directory, taskDir, "implement.jsonl")
   let entries = ctx.readJsonlWithFiles(jsonlPath)
 
@@ -81,7 +34,6 @@ function getImplementContext(ctx, taskDir) {
 
 function getCheckContext(ctx, taskDir) {
   const parts = []
-
   const jsonlPath = join(ctx.directory, taskDir, "check.jsonl")
   const entries = ctx.readJsonlWithFiles(jsonlPath)
 
@@ -117,7 +69,6 @@ function getCheckContext(ctx, taskDir) {
 
 function getFinishContext(ctx, taskDir) {
   const parts = []
-
   const jsonlPath = join(ctx.directory, taskDir, "finish.jsonl")
   const entries = ctx.readJsonlWithFiles(jsonlPath)
 
@@ -145,7 +96,6 @@ function getFinishContext(ctx, taskDir) {
 
 function getDebugContext(ctx, taskDir) {
   const parts = []
-
   const jsonlPath = join(ctx.directory, taskDir, "debug.jsonl")
   const entries = ctx.readJsonlWithFiles(jsonlPath)
 
@@ -180,12 +130,11 @@ function getDebugContext(ctx, taskDir) {
 
 function getResearchContext(ctx, taskDir) {
   const parts = []
-
   const specPath = ".trellis/spec"
-  const specFull = join(ctx.directory, specPath)
-
+  const specFull = ctx.resolveProjectPath(specPath)
   const structureLines = [`## Project Spec Directory Structure\n\n\`\`\`\n${specPath}/`]
-  if (existsSync(specFull)) {
+
+  if (specFull && existsSync(specFull)) {
     try {
       const entries = readdirSync(specFull, { withFileTypes: true })
         .filter(d => d.isDirectory() && !d.name.startsWith("."))
@@ -195,28 +144,14 @@ function getResearchContext(ctx, taskDir) {
         const entryPath = join(specFull, entry.name)
         if (existsSync(join(entryPath, "index.md"))) {
           structureLines.push(`├── ${entry.name}/`)
-        } else {
-          try {
-            const nested = readdirSync(entryPath, { withFileTypes: true })
-              .filter(d => d.isDirectory() && existsSync(join(entryPath, d.name, "index.md")))
-              .sort((a, b) => a.name.localeCompare(b.name))
-            if (nested.length > 0) {
-              structureLines.push(`├── ${entry.name}/`)
-              for (const n of nested) {
-                structureLines.push(`│   ├── ${n.name}/`)
-              }
-            }
-          } catch (error) {
-            debugLog("inject", "Failed to inspect nested spec directories:", error.message)
-          }
         }
       }
     } catch (error) {
       debugLog("inject", "Failed to inspect spec directory structure:", error.message)
     }
   }
-  structureLines.push("```")
 
+  structureLines.push("```")
   parts.push(structureLines.join("\n") + `
 
 ## Search Tips
@@ -228,14 +163,33 @@ function getResearchContext(ctx, taskDir) {
 
   if (taskDir) {
     const jsonlPath = join(ctx.directory, taskDir, "research.jsonl")
-    const researchEntries = ctx.readJsonlWithFiles(jsonlPath)
-    if (researchEntries.length > 0) {
+    const entries = ctx.readJsonlWithFiles(jsonlPath)
+    if (entries.length > 0) {
       parts.push("\n## Additional Search Context\n")
-      parts.push(ctx.buildContextFromEntries(researchEntries))
+      parts.push(ctx.buildContextFromEntries(entries))
     }
   }
 
   return parts.join("\n\n")
+}
+
+function getContextForAgent(ctx, taskDir, subagentType, isFinish) {
+  switch (subagentType) {
+    case "implement":
+    case "planner":
+    case "executor":
+      return getImplementContext(ctx, taskDir)
+    case "check":
+    case "reviewer":
+      return isFinish ? getFinishContext(ctx, taskDir) : getCheckContext(ctx, taskDir)
+    case "debug":
+      return getDebugContext(ctx, taskDir)
+    case "research":
+    case "oracle":
+      return getResearchContext(ctx, taskDir)
+    default:
+      return ""
+  }
 }
 
 function buildPrompt(agentType, originalPrompt, context, isFinish = false) {
@@ -390,32 +344,10 @@ ${originalPrompt}
 
 **Only allowed**: Describe what exists, where it is, how it works
 
-**Forbidden**: Suggest improvements, criticize implementation, modify files`
+**Forbidden**: Suggest improvements, criticize implementation, modify files`,
   }
 
   return templates[agentType] || originalPrompt
-}
-
-function getOmtAgentContext(ctx, subagentType, isFinish) {
-  const scriptPath = join(ctx.directory, ".trellis", "scripts", "get_context.py")
-  if (!existsSync(scriptPath)) {
-    return ""
-  }
-
-  try {
-    const args = [scriptPath, "--mode", "omt-agent", "--agent", subagentType]
-    if (isFinish) {
-      args.push("--finish")
-    }
-    return execFileSync(PYTHON_CMD, args, {
-      cwd: ctx.directory,
-      timeout: 10000,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }) || ""
-  } catch {
-    return ""
-  }
 }
 
 export default async ({ directory }) => {
@@ -449,65 +381,42 @@ export default async ({ directory }) => {
         }
 
         const taskDir = ctx.getCurrentTask()
-
         if (AGENTS_REQUIRE_TASK.includes(subagentType)) {
           if (!taskDir) {
             debugLog("inject", "Skipping - no current task")
             return
           }
-          const taskDirFull = join(directory, taskDir)
-          if (!existsSync(taskDirFull)) {
+          const taskDirFull = ctx.resolveTaskDir(taskDir)
+          if (!taskDirFull || !existsSync(taskDirFull)) {
             debugLog("inject", "Skipping - task directory not found")
             return
           }
-
-          updateCurrentPhase(ctx, taskDir, subagentType)
         }
 
         const isFinish = originalPrompt.toLowerCase().includes("[finish]")
-
-        let context = ""
-        const omtAgents = ["implement", "check", "debug", "research", "planner", "reviewer", "executor", "oracle"]
-        if (omtAgents.includes(subagentType)) {
-          context = getOmtAgentContext(ctx, subagentType, isFinish)
-        }
-
-        if (!context) {
-          switch (subagentType) {
-            case "implement":
-              context = getImplementContext(ctx, taskDir)
-              break
-            case "check":
-              context = isFinish
-                ? getFinishContext(ctx, taskDir)
-                : getCheckContext(ctx, taskDir)
-              break
-            case "debug":
-              context = getDebugContext(ctx, taskDir)
-              break
-            case "research":
-              context = getResearchContext(ctx, taskDir)
-              break
-          }
-        }
-
+        const context = getContextForAgent(ctx, taskDir, subagentType, isFinish)
         if (!context) {
           debugLog("inject", "No context to inject")
           return
         }
 
-        const newPrompt = buildPrompt(subagentType, originalPrompt, context, isFinish)
+        const promptType = subagentType === "planner" || subagentType === "executor"
+          ? "implement"
+          : subagentType === "reviewer"
+            ? "check"
+            : subagentType === "oracle"
+              ? "research"
+              : subagentType
 
         output.args = {
           ...args,
-          prompt: newPrompt
+          prompt: buildPrompt(promptType, originalPrompt, context, isFinish),
         }
 
-        debugLog("inject", "Injected context for", subagentType, "prompt length:", newPrompt.length)
-
+        debugLog("inject", "Injected context for", subagentType, "prompt length:", output.args.prompt.length)
       } catch (error) {
         debugLog("inject", "Error in tool.execute.before:", error.message, error.stack)
       }
-    }
+    },
   }
 }

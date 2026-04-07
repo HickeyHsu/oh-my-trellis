@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import get_spec_scope
 from .packages_context import get_context_packages_json, get_context_packages_text
-from .paths import get_active_journal_file, get_current_task, get_repo_root
+from .paths import get_active_journal_file, get_current_task, get_repo_root, resolve_task_ref
 from .session_context import get_context_json
 from .tasks import load_task
 
@@ -22,7 +22,24 @@ def _read_text(path: Path) -> str:
 
 
 def _read_project_file(repo_root: Path, relative_path: str) -> str:
-    return _read_text(repo_root / relative_path)
+    full_path = _resolve_repo_path(repo_root, relative_path)
+    return _read_text(full_path) if full_path is not None else ""
+
+
+def _resolve_repo_path(repo_root: Path, relative_path: str) -> Path | None:
+    if not relative_path:
+        return None
+
+    candidate = Path(relative_path.replace("\\", "/"))
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+
+    full_path = (repo_root / candidate).resolve()
+    try:
+        full_path.relative_to(repo_root.resolve())
+    except ValueError:
+        return None
+    return full_path
 
 
 def _split_sections(markdown: str) -> dict[str, list[str]]:
@@ -108,7 +125,9 @@ def _read_jsonl_entries(repo_root: Path, task_dir: Path, filenames: list[str]) -
             if not isinstance(file_path, str) or not file_path:
                 continue
 
-            full_path = repo_root / file_path
+            full_path = _resolve_repo_path(repo_root, file_path)
+            if full_path is None:
+                continue
             if item.get("type") == "directory" or file_path.endswith("/"):
                 entries.extend(_read_directory_md_files(full_path, file_path))
                 continue
@@ -184,7 +203,9 @@ def _collect_task_bundle(repo_root: Path) -> dict:
     if not current_task:
         return {}
 
-    task_dir = repo_root / current_task
+    task_dir = resolve_task_ref(current_task, repo_root)
+    if task_dir is None:
+        return {}
     task_info = load_task(task_dir)
     if task_info is None:
         return {}

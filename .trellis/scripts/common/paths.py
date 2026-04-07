@@ -234,11 +234,14 @@ def normalize_task_ref(task_ref: str) -> str:
 
     path_obj = Path(normalized)
     if path_obj.is_absolute():
-        return str(path_obj)
+        return ""
 
     normalized = normalized.replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
+
+    if ".." in Path(normalized).parts:
+        return ""
 
     if normalized.startswith(f"{DIR_TASKS}/"):
         return f"{DIR_WORKFLOW}/{normalized}"

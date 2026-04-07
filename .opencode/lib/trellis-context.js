@@ -11,12 +11,8 @@
  */
 
 import { existsSync, readFileSync, appendFileSync, readdirSync } from "fs"
-import { isAbsolute, join } from "path"
-import { homedir, platform } from "os"
-import { execSync } from "child_process"
-
-// Python command: Windows uses 'python', macOS/Linux use 'python3'
-const PYTHON_CMD = platform() === "win32" ? "python" : "python3"
+import { isAbsolute, join, relative, resolve } from "path"
+import { homedir } from "os"
 
 // Debug logging
 const DEBUG_LOG = "/tmp/trellis-plugin-debug.log"
@@ -182,6 +178,20 @@ export class TrellisContext {
     return existsSync(join(this.directory, ".trellis"))
   }
 
+  isDeveloperInitialized() {
+    const developerFile = join(this.directory, ".trellis", ".developer")
+    if (!existsSync(developerFile)) {
+      return false
+    }
+
+    try {
+      const content = readFileSync(developerFile, "utf-8")
+      return content.split("\n").some(line => line.startsWith("name=") && line.trim().length > 5)
+    } catch {
+      return false
+    }
+  }
+
   /**
    * Get current task directory from .trellis/.current-task
    */
@@ -205,12 +215,16 @@ export class TrellisContext {
     }
 
     if (isAbsolute(taskRef)) {
-      return taskRef.trim()
+      return ""
     }
 
     let normalized = taskRef.trim().replace(/\\/g, "/")
     while (normalized.startsWith("./")) {
       normalized = normalized.slice(2)
+    }
+
+    if (normalized.split("/").includes("..")) {
+      return ""
     }
 
     if (normalized.startsWith("tasks/")) {
@@ -220,21 +234,31 @@ export class TrellisContext {
     return normalized
   }
 
+  resolveProjectPath(relativePath) {
+    if (!relativePath || isAbsolute(relativePath)) {
+      return null
+    }
+
+    const repoRoot = resolve(this.directory)
+    const fullPath = resolve(repoRoot, relativePath.replace(/\\/g, "/"))
+    const rel = relative(repoRoot, fullPath)
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+      return fullPath
+    }
+    return null
+  }
+
   resolveTaskDir(taskRef) {
     const normalized = this.normalizeTaskRef(taskRef)
     if (!normalized) {
       return null
     }
 
-    if (isAbsolute(normalized)) {
-      return normalized
-    }
-
     if (normalized.startsWith(".trellis/")) {
-      return join(this.directory, normalized)
+      return this.resolveProjectPath(normalized)
     }
 
-    return join(this.directory, ".trellis", "tasks", normalized)
+    return this.resolveProjectPath(join(".trellis", "tasks", normalized))
   }
 
   // ============================================================
@@ -300,24 +324,8 @@ export class TrellisContext {
    * Read a file relative to project directory
    */
   readProjectFile(relativePath) {
-    return this.readFile(join(this.directory, relativePath))
-  }
-
-  /**
-   * Run a Python script and return output
-   */
-  runScript(scriptPath, cwd = null) {
-    try {
-      const result = execSync(`${PYTHON_CMD} "${scriptPath}"`, {
-        cwd: cwd || this.directory,
-        timeout: 10000,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"]
-      })
-      return result || ""
-    } catch {
-      return ""
-    }
+    const fullPath = this.resolveProjectPath(relativePath)
+    return fullPath ? this.readFile(fullPath) : null
   }
 
   // ============================================================
@@ -332,9 +340,9 @@ export class TrellisContext {
    */
   readDirectoryMdFiles(dirPath, maxFiles = 20) {
     const results = []
-    const fullPath = join(this.directory, dirPath)
+    const fullPath = this.resolveProjectPath(dirPath)
 
-    if (!existsSync(fullPath)) {
+    if (!fullPath || !existsSync(fullPath)) {
       return results
     }
 
@@ -384,8 +392,8 @@ export class TrellisContext {
           results.push(...dirEntries)
         } else {
           // Read single file
-          const fullPath = join(this.directory, file)
-          const fileContent = this.readFile(fullPath)
+          const fullPath = this.resolveProjectPath(file)
+          const fileContent = fullPath ? this.readFile(fullPath) : null
           if (fileContent) {
             results.push({ path: file, content: fileContent })
           }
