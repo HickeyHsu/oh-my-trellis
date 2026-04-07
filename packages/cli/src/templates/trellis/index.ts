@@ -49,6 +49,7 @@ export const commonLog = readTemplate("scripts/common/log.py");
 export const commonGit = readTemplate("scripts/common/git.py");
 export const commonOmt = readTemplate("scripts/common/omt.py");
 export const commonOmtConfig = readTemplate("scripts/common/omt_config.py");
+export const commonOmtContext = readTemplate("scripts/common/omt_context.py");
 export const commonOmtWorkflow = readTemplate("scripts/common/omt_workflow.py");
 export const commonTypes = readTemplate("scripts/common/types.py");
 export const commonTasks = readTemplate("scripts/common/tasks.py");
@@ -119,6 +120,7 @@ export function getAllScripts(): Map<string, string> {
   scripts.set("common/git.py", commonGit);
   scripts.set("common/omt.py", commonOmt);
   scripts.set("common/omt_config.py", commonOmtConfig);
+  scripts.set("common/omt_context.py", commonOmtContext);
   scripts.set("common/omt_workflow.py", commonOmtWorkflow);
   scripts.set("common/types.py", commonTypes);
   scripts.set("common/tasks.py", commonTasks);

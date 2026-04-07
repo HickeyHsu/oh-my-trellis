@@ -16,12 +16,16 @@ import json
 
 from .git import run_git
 from .session_context import (
-    get_context_json,
-    get_context_text,
     get_context_record_json,
     get_context_text_record,
     output_json,
     output_text,
+)
+from .omt_context import (
+    get_omt_agent_json,
+    get_omt_agent_text,
+    get_omt_session_json,
+    get_omt_session_text,
 )
 from .packages_context import (
     get_context_packages_text,
@@ -50,9 +54,15 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["default", "record", "packages"],
+        choices=["default", "record", "packages", "omt-session", "omt-agent"],
         default="default",
-        help="Output mode: default (full context), record (for record-session), packages (package info only)",
+        help="Output mode: default, record, packages, omt-session, omt-agent",
+    )
+    parser.add_argument("--agent", help="Agent name for --mode omt-agent")
+    parser.add_argument(
+        "--finish",
+        action="store_true",
+        help="Include finish-phase context for omt-agent mode",
     )
 
     args = parser.parse_args()
@@ -67,6 +77,18 @@ def main() -> None:
             print(json.dumps(get_context_packages_json(), indent=2, ensure_ascii=False))
         else:
             print(get_context_packages_text())
+    elif args.mode == "omt-session":
+        if args.json:
+            print(json.dumps(get_omt_session_json(), indent=2, ensure_ascii=False))
+        else:
+            print(get_omt_session_text())
+    elif args.mode == "omt-agent":
+        if not args.agent:
+            raise SystemExit("--agent is required for --mode omt-agent")
+        if args.json:
+            print(json.dumps(get_omt_agent_json(args.agent, finish=args.finish), indent=2, ensure_ascii=False))
+        else:
+            print(get_omt_agent_text(args.agent, finish=args.finish))
     else:
         if args.json:
             output_json()
