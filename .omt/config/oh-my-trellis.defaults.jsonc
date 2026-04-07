@@ -1,0 +1,24 @@
+{
+  "$schema": "./schema.json",
+  "routing": {
+    "enabled": true,
+    "tiers": {
+      "low": null,
+      "high": null
+    },
+    "roles": {
+      "planner": "high",
+      "reviewer": "high",
+      "oracle": "high",
+      "researcher": "low"
+    },
+    "executor": {
+      "fast": "low",
+      "strict": "high"
+    }
+  },
+  "skills": {
+    "import_non_conflicting_omo_skills": true,
+    "browser_default": "playwright"
+  }
+}

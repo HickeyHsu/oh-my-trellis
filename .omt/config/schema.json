@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "oh-my-trellis config",
+  "type": "object",
+  "properties": {
+    "routing": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "tiers": {
+          "type": "object",
+          "properties": {
+            "low": { "type": ["string", "null"] },
+            "high": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "roles": {
+          "type": "object",
+          "properties": {
+            "planner": { "enum": ["low", "high"] },
+            "reviewer": { "enum": ["low", "high"] },
+            "oracle": { "enum": ["low", "high"] },
+            "researcher": { "enum": ["low", "high"] }
+          },
+          "additionalProperties": false
+        },
+        "executor": {
+          "type": "object",
+          "properties": {
+            "fast": { "enum": ["low", "high"] },
+            "strict": { "enum": ["low", "high"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "import_non_conflicting_omo_skills": { "type": "boolean" },
+        "browser_default": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

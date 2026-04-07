@@ -1,0 +1,9 @@
+{
+  "$schema": "./.omt/config/schema.json",
+  "routing": {
+    "tiers": {
+      "low": null,
+      "high": null
+    }
+  }
+}
