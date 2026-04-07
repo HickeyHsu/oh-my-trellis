@@ -1402,8 +1402,8 @@ print(json.dumps(resolved))
     const payload = JSON.parse(output) as {
       mode: string;
       agent: string;
-      context_entries: Array<{ path: string; content: string }>;
-      extra_files: Array<{ path: string; content: string }>;
+      context_entries: { path: string; content: string }[];
+      extra_files: { path: string; content: string }[];
     };
     expect(payload.mode).toBe("omt-agent");
     expect(payload.agent).toBe("implement");
@@ -2038,7 +2038,7 @@ describe("regression: OMT OpenCode adapter", () => {
     );
 
     const plugin = await omtCommandGuardsPlugin({ directory: tmpDir });
-    const executeOutput = { parts: [] as Array<{ type: string; text?: string }> };
+    const executeOutput = { parts: [] as { type: string; text?: string }[] };
     await plugin["command.execute.before"]?.(
       { command: "omt-execute", sessionID: "ses_1", arguments: "" },
       executeOutput,
@@ -2054,7 +2054,7 @@ describe("regression: OMT OpenCode adapter", () => {
       "# Verify\n\n## Round 1\n\n### Outcome\n\nfail\n",
     );
 
-    const closeOutput = { parts: [] as Array<{ type: string; text?: string }> };
+    const closeOutput = { parts: [] as { type: string; text?: string }[] };
     await plugin["command.execute.before"]?.(
       { command: "omt-close", sessionID: "ses_1", arguments: "" },
       closeOutput,

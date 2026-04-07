@@ -206,11 +206,13 @@ function getResearchContext(ctx, taskDir) {
                 structureLines.push(`│   ├── ${n.name}/`)
               }
             }
-          } catch {
+          } catch (error) {
+            debugLog("inject", "Failed to inspect nested spec directories:", error.message)
           }
         }
       }
-    } catch {
+    } catch (error) {
+      debugLog("inject", "Failed to inspect spec directory structure:", error.message)
     }
   }
   structureLines.push("```")
