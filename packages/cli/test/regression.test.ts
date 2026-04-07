@@ -1028,6 +1028,12 @@ describe("regression: OMT additive task compatibility", () => {
     return taskDir;
   }
 
+  function writeProjectFile(relativePath: string, content: string): void {
+    const absPath = path.join(tmpDir, relativePath);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, content, "utf-8");
+  }
+
   function runPythonScript(filename: string, content: string): string {
     const scriptPath = path.join(tmpDir, filename);
     fs.writeFileSync(scriptPath, content, "utf-8");
@@ -1156,6 +1162,185 @@ print(json.dumps({
     expect(payload.current_phase).toBe(2);
     expect(payload.workflow_id).toBe("omt/v1");
     expect(payload.workflow_mode).toBe("fast");
+  });
+
+  it("[omt] shared workflow helpers scaffold strict artifacts and validate transitions", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("omt-strict-task", {
+      title: "OMT strict task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [
+        { phase: 1, action: "implement" },
+        { phase: 2, action: "check" },
+      ],
+      meta: {
+        workflow_id: "omt/v1",
+        workflow_mode: "strict",
+      },
+    });
+
+    const output = runPythonScript(
+      "strict_artifacts.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.omt_workflow import scaffold_strict_artifacts, validate_transition
+
+task_dir = Path(${JSON.stringify(taskDir)})
+created = scaffold_strict_artifacts(task_dir)
+execute_result = validate_transition(task_dir, "execute")
+close_result = validate_transition(task_dir, "close")
+print(json.dumps({
+    "created": created,
+    "execute_ok": execute_result[0],
+    "execute_message": execute_result[1],
+    "close_ok": close_result[0],
+    "close_message": close_result[1],
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      created: string[];
+      execute_ok: boolean;
+      execute_message: string;
+      close_ok: boolean;
+      close_message: string;
+    };
+    expect(payload.created).toEqual(
+      expect.arrayContaining(["plan.md", "review.md", "execute.md", "verify.md", "close.md"]),
+    );
+    expect(payload.execute_ok).toBe(true);
+    expect(payload.close_ok).toBe(true);
+  });
+
+  it("[omt] adopt_legacy_task adds metadata and fast close artifact in place", () => {
+    writeTrellisScripts();
+    const taskDir = writeTaskJson("legacy-fast-task", {
+      title: "Legacy fast task",
+      status: "planning",
+      current_phase: 0,
+      next_action: [],
+      meta: {},
+    });
+
+    const output = runPythonScript(
+      "adopt_fast.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.io import read_json
+from common.omt_workflow import adopt_legacy_task
+
+task_dir = Path(${JSON.stringify(taskDir)})
+created = adopt_legacy_task(task_dir, "fast")
+saved = read_json(task_dir / "task.json") or {}
+print(json.dumps({
+    "created": created,
+    "workflow_id": saved.get("meta", {}).get("workflow_id"),
+    "workflow_mode": saved.get("meta", {}).get("workflow_mode"),
+    "has_close": (task_dir / "close.md").is_file(),
+}))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      created: string[];
+      workflow_id: string;
+      workflow_mode: string;
+      has_close: boolean;
+    };
+    expect(payload.created).toEqual(["close.md"]);
+    expect(payload.workflow_id).toBe("omt/v1");
+    expect(payload.workflow_mode).toBe("fast");
+    expect(payload.has_close).toBe(true);
+  });
+
+  it("[omt] root config overrides framework defaults deterministically", () => {
+    writeTrellisScripts();
+    writeProjectFile(
+      path.join(".omt", "config", "oh-my-trellis.defaults.jsonc"),
+      JSON.stringify(
+        {
+          routing: {
+            enabled: true,
+            tiers: { low: "low-default", high: "high-default" },
+            executor: { fast: "low", strict: "high" },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    writeProjectFile(
+      "oh-my-trellis.jsonc",
+      JSON.stringify(
+        {
+          routing: {
+            tiers: { high: "high-override" },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const output = runPythonScript(
+      "resolve_config.py",
+      `from pathlib import Path
+import json
+import sys
+
+sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+
+from common.omt_config import resolve_omt_config
+
+resolved = resolve_omt_config(Path.cwd())
+print(json.dumps(resolved))
+`,
+    );
+
+    const payload = JSON.parse(output) as {
+      routing: {
+        enabled: boolean;
+        tiers: { low: string; high: string };
+        executor: { fast: string; strict: string };
+      };
+    };
+    expect(payload.routing.enabled).toBe(true);
+    expect(payload.routing.tiers.low).toBe("low-default");
+    expect(payload.routing.tiers.high).toBe("high-override");
+    expect(payload.routing.executor.strict).toBe("high");
+  });
+});
+
+describe("regression: OMT definition layer", () => {
+  const repoRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../..",
+  );
+
+  it("[omt] definition layer exists with expected directories", () => {
+    expect(fs.existsSync(path.join(repoRoot, ".omt", "agents"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, ".omt", "commands"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, ".omt", "prompts"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, ".omt", "hooks"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, ".omt", "config"))).toBe(true);
+  });
+
+  it("[omt] root config uses documented schema path", () => {
+    const rootConfig = fs.readFileSync(
+      path.join(repoRoot, "oh-my-trellis.jsonc"),
+      "utf-8",
+    );
+    expect(rootConfig).toContain('"$schema": "./.omt/config/schema.json"');
   });
 });
 
